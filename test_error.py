@@ -5,8 +5,9 @@
 
 import math
 import copy
-from polarALL import process_sequence_polar, polar_to_complex_tensor, random_sequence_tensor, create_initial_vec_like_v2 as create_initial_vec_polar
-from complexALL import process_sequence_complex, create_initial_vec_like_v2 as create_initial_vec_complex
+from polarALL import process_sequence_polar, polar_to_complex_tensor
+from complexALL import process_sequence_complex
+from utils import random_sequence_tensor, create_initial_vec_complex
 import numpy as np
 import torch
 
@@ -56,7 +57,23 @@ def test_error(n_amps, seq_length, seed=42):
     print(f"序列长度: {len(seq)} 个门")
     for step in range(len(complex_history)):
         max_diff, rms_diff, mean_diff = compute_state_difference(complex_history[step], polar_history[step])
-        print(f"门 {step}: max={max_diff:.2e}, rms={rms_diff:.2e}, mean={mean_diff:.2e}")
+        if step == 0:
+            gate_str = "初始状态"
+        else:
+            gate_info = seq[step-1]
+            if len(gate_info) == 4:
+                # 单比特门: (gate_name, param_str, params, qubit_idx)
+                gate_name, param_str, _, qubit_idx = gate_info
+                gate_str = f"{gate_name}(比特={qubit_idx})"
+            elif len(gate_info) == 5:
+                # 控制门: (gate_name, param_str, params, control_idx, target_idx)
+                gate_name, param_str, _, control_idx, target_idx = gate_info
+                gate_str = f"{gate_name}(控制={control_idx}, 目标={target_idx})"
+            else:
+                gate_str = f"{gate_name}(未知格式)"
+            if param_str:
+                gate_str += f"({param_str})"
+        print(f"门 {step} ({gate_str}): max={max_diff:.2e}, rms={rms_diff:.2e}, mean={mean_diff:.2e}")
 
 if __name__ == "__main__":
     test_error(n_amps=32, seq_length=30, seed=42)

@@ -19,6 +19,7 @@ import cmath
 import random
 import numpy as np
 from typing import List, Tuple
+from utils import random_sequence_tensor, create_initial_vec_like_v2
 
 # 设置设备
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -644,93 +645,7 @@ def polar_vec_to_string(polar_vec: torch.Tensor, indices=None) -> str:
         result.append(f"{i:02b}: {complex_val:.5f}")
     return " | ".join(result)
 
-# ===== 序列生成功能 =====
-
-def random_sequence_tensor(n: int, m: int, amp_n: int, n_qubits:int=5, shuffle: bool = False):
-    """生成随机量子门序列（PyTorch 版本，包含确定的比特位信息）"""
-    seq = []
-    # 单参数门
-    single_param_gates = ['Rx', 'Ry', 'Rz', 'U1']
-    # 多参数门
-    multi_param_gates = ['U2', 'U3']
-    # 无参数单比特门
-    no_param_gates = ['X', 'Y', 'S', 'T', 'Z']
-    #no_param_gates = ['X']
-    # 无参数控制门
-    no_param_controlled_gates = ['CX', 'CY', 'CZ', 'CH', 'CS', 'CT']
-    # 单参数控制门
-    single_param_controlled_gates = ['CRx', 'CRy', 'CRz', 'CU1']
-    # 多参数控制门
-    multi_param_controlled_gates = ['CU2', 'CU3']
-
-    # 生成各种类型的门
-    for _ in range(n):
-        g = random.choice(no_param_gates)
-        qubit_idx = random.randint(0, n_qubits - 1)
-        seq.append((g, '', [], qubit_idx))
-    '''
-    for _ in range(n):
-        g = random.choice(no_param_controlled_gates)
-        qubits = random.sample(range(n_qubits), 2)
-        control_idx, target_idx = qubits[0], qubits[1]
-        seq.append((g, '', [], control_idx, target_idx))
-    '''
-    for _ in range(m):
-        g = random.choice(single_param_gates + multi_param_gates)
-        qubit_idx = random.randint(0, n_qubits - 1)
-        if g in single_param_gates:
-            param = random.uniform(0, 2 * math.pi)
-            seq.append((g, f'({param:.3f})', [param], qubit_idx))
-        elif g == 'U2':
-            phi = random.uniform(0, 2 * math.pi)
-            lambda_param = random.uniform(0, 2 * math.pi)
-            seq.append((g, f'({phi:.3f},{lambda_param:.3f})', [phi, lambda_param], qubit_idx))
-        elif g == 'U3':
-            theta = random.uniform(0, 2 * math.pi)
-            phi = random.uniform(0, 2 * math.pi)
-            lambda_param = random.uniform(0, 2 * math.pi)
-            seq.append((g, f'({theta:.3f},{phi:.3f},{lambda_param:.3f})', [theta, phi, lambda_param], qubit_idx))
-
-    for _ in range(m):
-        g = random.choice(single_param_controlled_gates + multi_param_controlled_gates)
-        qubits = random.sample(range(n_qubits), 2)
-        control_idx, target_idx = qubits[0], qubits[1]
-        if g in single_param_controlled_gates:
-            param = random.uniform(0, 2 * math.pi)
-            seq.append((g, f'({param:.3f})', [param], control_idx, target_idx))
-        elif g == 'CU2':
-            phi = random.uniform(0, 2 * math.pi)
-            lambda_param = random.uniform(0, 2 * math.pi)
-            seq.append((g, f'({phi:.3f},{lambda_param:.3f})', [phi, lambda_param], control_idx, target_idx))
-        elif g == 'CU3':
-            theta = random.uniform(0, 2 * math.pi)
-            phi = random.uniform(0, 2 * math.pi)
-            lambda_param = random.uniform(0, 2 * math.pi)
-            seq.append((g, f'({theta:.3f},{phi:.3f},{lambda_param:.3f})', [theta, phi, lambda_param], control_idx, target_idx))
-
-    for _ in range(amp_n):
-        g = random.choice(['H', 'Rx', 'Ry', 'Rz'])
-        qubit_idx = random.randint(0, n_qubits - 1)
-        if g in ['Rx', 'Ry', 'Rz']:
-            param = random.uniform(0, 2 * math.pi)
-            seq.append((g, f'({param:.3f})', [param], qubit_idx))
-        else:
-            seq.append((g, '', [], qubit_idx))
-
-    if shuffle:
-        random.shuffle(seq)
-    return seq
-
 # ===== 核心处理函数 =====
-
-def create_initial_vec_like_v2(n_amps: int) -> List[complex]:
-    """按照 ALLeularV2.py 第903行的确切格式创建初始向量（未归一化）"""
-    complex_vector = [complex(random.random(), random.random()) for _ in range(n_amps)]
-    #norm = math.sqrt(sum(abs(z)**2 for z in complex_vector))
-    #normalized_vector = [z / norm for z in complex_vector]
-    norm = np.linalg.norm(complex_vector)
-    normalized_vector = complex_vector / norm
-    return normalized_vector
 
 def process_sequence_polar(initial_vec: List[complex], seq: List[Tuple], verbose: bool = False) -> Tuple[torch.Tensor, List[torch.Tensor]]:
     """

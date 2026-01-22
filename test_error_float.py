@@ -5,8 +5,9 @@
 
 import math
 import copy
-from polarFloat import process_sequence_polar_float, polar_to_complex_tensor_float, create_initial_vec_like_v2 as create_initial_vec_polar_float
-from complexALL import process_sequence_complex, create_initial_vec_like_v2 as create_initial_vec_complex
+from polarFloat import process_sequence_polar_float, polar_to_complex_tensor_float
+from complexALL import process_sequence_complex
+from utils import random_sequence, create_initial_vec_complex
 import numpy as np
 import torch
 
@@ -40,25 +41,7 @@ def test_error_float(n_amps, seq_length, seed=42):
     n_qubits = int(math.log2(n_amps))
 
     # 手动生成只包含单比特门的序列
-    seq = []
-    single_gates = ['X', 'Y', 'Z', 'S', 'T']
-    single_param_gates = ['Rz']
-
-    for i in range(seq_length):
-        if i % 2 == 0:
-            # 无参数门
-            gate = np.random.choice(single_gates)
-            qubit_idx = np.random.randint(0, n_qubits)
-            seq.append((gate, '', [], qubit_idx))
-        else:
-            # 有参数门
-            gate = np.random.choice(single_param_gates)
-            param = np.random.uniform(0, 2 * math.pi)
-            qubit_idx = np.random.randint(0, n_qubits)
-            seq.append((gate, f'({param:.3f})', [param], qubit_idx))
-    print(f"生成的量子门序列: {len(seq)} 个门")
-    print(f"前10个门: {[f'{name}({param_str})' if param_str else name for name, param_str, _, qubit_idx in seq[:10]]}")
-
+    seq = random_sequence(30, 0, 0, n_qubits=n_qubits, shuffle=False)
     # 创建相同的初始向量
     initial_vec = create_initial_vec_complex(n_amps)
     initial_vec2 = copy.deepcopy(initial_vec)
@@ -91,8 +74,16 @@ def test_error_float(n_amps, seq_length, seed=42):
         max_diff, rms_diff, mean_diff = compute_state_difference(complex_history[step], polar_complex_history[step])
         gate_info = seq[step-1] if step > 0 else "初始状态"
         if step > 0:
-            gate_name, param_str, _, qubit_idx = gate_info
-            gate_str = f"{gate_name}(比特={qubit_idx})"
+            if len(gate_info) == 4:
+                # 单比特门: (gate_name, param_str, params, qubit_idx)
+                gate_name, param_str, _, qubit_idx = gate_info
+                gate_str = f"{gate_name}(比特={qubit_idx})"
+            elif len(gate_info) == 5:
+                # 控制门: (gate_name, param_str, params, control_idx, target_idx)
+                gate_name, param_str, _, control_idx, target_idx = gate_info
+                gate_str = f"{gate_name}(控制={control_idx}, 目标={target_idx})"
+            else:
+                gate_str = f"{gate_name}(未知格式)"
             if param_str:
                 gate_str += f"({param_str})"
         else:

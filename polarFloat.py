@@ -20,6 +20,7 @@ import cmath
 import random
 import numpy as np
 from typing import List, Tuple
+from utils import random_sequence_tensor, create_initial_vec_like_v2
 
 # 设置设备
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -575,16 +576,7 @@ def polar_vec_to_string_float(polar_vec: torch.Tensor, indices=None) -> str:
         result.append(f"{i:02b}: {complex_val:.5f}")
     return " | ".join(result)
 
-# ===== 序列处理主函数 =====
-
-def create_initial_vec_like_v2(n_amps: int) -> List[complex]:
-    """按照 ALLeularV2.py 第903行的确切格式创建初始向量（未归一化）"""
-    complex_vector = [complex(random.random(), random.random()) for _ in range(n_amps)]
-    #norm = math.sqrt(sum(abs(z)**2 for z in complex_vector))
-    #normalized_vector = [z / norm for z in complex_vector]
-    norm = np.linalg.norm(complex_vector)
-    normalized_vector = complex_vector / norm
-    return normalized_vector
+# ===== 核心处理函数 =====
 
 def process_sequence_polar_float(initial_vec: List[complex], seq: List[Tuple], verbose: bool = False) -> Tuple[torch.Tensor, List[torch.Tensor]]:
     """
