@@ -29,9 +29,11 @@ def random_sequence(n: int, m: int, amp_n: int, n_qubits: int = 5, shuffle: bool
     # 多参数门
     multi_param_gates = ['U2', 'U3']
     # 无参数单比特门
-    no_param_gates = ['X', 'Y', 'S', 'T', 'Z']
+    no_param_gates = ['X', 'Y', 'S', 'H', 'T', 'Z']
+    #no_param_gates = ['X', 'Y', 'S', 'T', 'Z']
     # 无参数控制门
-    no_param_controlled_gates = ['CX', 'CY', 'CZ', 'CH', 'CS', 'CT']
+    no_param_controlled_gates = ['CX', 'CY', 'CH', 'CZ',  'CS', 'CT']
+    #no_param_controlled_gates = ['CX', 'CY', 'CZ',  'CS', 'CT']
     # 单参数控制门
     single_param_controlled_gates = ['CRx', 'CRy', 'CRz', 'CU1']
     # 多参数控制门
@@ -49,7 +51,6 @@ def random_sequence(n: int, m: int, amp_n: int, n_qubits: int = 5, shuffle: bool
         qubits = random.sample(range(n_qubits), 2)
         control_idx, target_idx = qubits[0], qubits[1]
         seq.append((g, '', [], control_idx, target_idx))
-
     # 生成有参数单比特门（单参数和多参数）
     for _ in range(m):
         g = random.choice(single_param_gates + multi_param_gates)
@@ -117,7 +118,7 @@ def random_sequence_single_qubit_only(n: int, m: int, amp_n: int, n_qubits: int 
     seq = []
 
     # 无参数单比特门
-    no_param_gates = ['X', 'Y', 'S', 'T', 'Z']
+    no_param_gates = ['X', 'Y', 'S', 'H', 'T', 'Z']
     # 单参数门
     single_param_gates = ['Rx', 'Ry', 'Rz']
 
@@ -149,7 +150,7 @@ def random_sequence_single_qubit_only(n: int, m: int, amp_n: int, n_qubits: int 
 
     return seq
 
-def create_initial_vec_complex(n_amps: int) -> List[complex]:
+def create_initial_vec_complex(n_amps: int, avg=True) -> List[complex]:
     """
     创建归一化的复数初始向量（与 ALLeularV2.py 第903行格式相同）
 
@@ -162,8 +163,10 @@ def create_initial_vec_complex(n_amps: int) -> List[complex]:
     assert n_amps & (n_amps - 1) == 0, f"向量长度 {n_amps} 必须是2的幂次"
 
     # 创建随机复数向量
-    complex_vector = [complex(random.random(), random.random()) for _ in range(n_amps)]
-
+    if not avg:
+        complex_vector = [complex(random.random(), random.random()) for _ in range(n_amps)]
+    else:
+        complex_vector = [complex(1,0) for _ in range(n_amps)]
     # 归一化
     norm = np.linalg.norm(complex_vector)
     normalized_vector = complex_vector / norm
