@@ -105,4 +105,4 @@ def compare_implementations_state3(precision="state3", n_amps=32, seq_length=50,
 
 if __name__ == "__main__":
     # 测试三状态版本
-    compare_implementations_state3(precision="state3", n_amps=2**8, seq_length=30, seed=42)
+    compare_implementations_state3(precision="state3", n_amps=2**14, seq_length=30, seed=42)

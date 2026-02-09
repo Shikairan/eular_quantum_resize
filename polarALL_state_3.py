@@ -27,29 +27,29 @@ print(f"Using device: {device}")
 
 # ===== 常量定义 =====
 R_MIN, R_MAX = 0.0, 1.0          # 幅值动态范围 [0,1]
-TH_SCALE = 128 / math.pi          # 相位 [-π,π] → [-128,127]
+TH_SCALE = 2048 / math.pi         # 相位 [-π,π] → [-2048,2047] (使用 int16)
 
 # ===== PyTorch 版本的编解码函数 (三状态版本) =====
 
 def decode_r_tensor(r_encoded: torch.Tensor, scale_vec: torch.Tensor) -> torch.Tensor:
     """
-    PyTorch 版本：解码幅度（双精度版本）
+    PyTorch 版本：解码幅度（int16 高精度版本）
 
     Args:
-        r_encoded: 编码后的幅度值 (uint8, 范围 [-128, 127])
+        r_encoded: 编码后的幅度值 (int16, 范围 [-2048, 2047])
         scale_vec: 缩放向量，用于扩展幅度范围
 
     Returns:
         解码后的幅度值 (float32)
     """
-    # 基础解码
-    r_base = (r_encoded + 128.0) / 255.0 * (R_MAX - R_MIN) + R_MIN
+    # 基础解码 - 使用 4096 作为新的范围 (2^12)
+    r_base = (r_encoded + 2048.0) / 4095.0 * (R_MAX - R_MIN) + R_MIN
     # 应用缩放
     return r_base * scale_vec
 
 def encode_r_tensor(r: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    PyTorch 版本：编码幅度（双精度版本）
+    PyTorch 版本：编码幅度（高精度版本）
 
     Args:
         r: 幅度值 (float32)
@@ -57,63 +57,74 @@ def encode_r_tensor(r: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     Returns:
         (r_encoded, scale_vec): 编码后的幅度值和缩放向量
     """
-    # 计算缩放因子，使得 r / scale 在 [R_MIN, R_MAX] 范围内
-    scale_vec = torch.clamp(r / R_MAX, min=1.0)
+    # 对于幅度值，我们使用动态缩放来保持高精度
+    # 找到合适的缩放因子，使得编码后的值尽可能接近原始值
+    scale_vec = torch.ones_like(r)  # 默认缩放因子为 1
+
+    # 对于大于 R_MAX 的值，需要缩放
+    large_mask = r > R_MAX
+    if large_mask.any():
+        scale_vec = torch.where(large_mask, r / R_MAX, scale_vec)
+
     r_scaled = r / scale_vec
 
-    # 编码缩放后的值
+    # 确保在有效范围内
     r_scaled = torch.clamp(r_scaled, R_MIN, R_MAX)
-    r_encoded = torch.round((r_scaled - R_MIN) / (R_MAX - R_MIN) * 255.0 - 128.0).to(torch.int8)
+
+    # 使用更高的精度进行编码（使用 float64 进行中间计算，int16 编码）
+    r_scaled_f64 = r_scaled.double()
+    encoded_f64 = (r_scaled_f64 - R_MIN) / (R_MAX - R_MIN) * 4095.0 - 2048.0
+    r_encoded = torch.round(encoded_f64).to(torch.int16)
 
     return r_encoded, scale_vec
 
 def decode_th_tensor(th_encoded: torch.Tensor) -> torch.Tensor:
-    """PyTorch 版本：解码相位"""
+    """PyTorch 版本：解码相位 (int16 高精度版本)"""
     return th_encoded / TH_SCALE
 
 def encode_th_tensor(th: torch.Tensor) -> torch.Tensor:
-    """PyTorch 版本：编码相位"""
+    """PyTorch 版本：编码相位 (int16 高精度版本)"""
     # 使用 atan2 确保相位在 [-π, π] 范围内
     th = torch.atan2(torch.sin(th), torch.cos(th))
-    return torch.round(th * TH_SCALE).to(torch.int8)
+    return torch.round(th * TH_SCALE).to(torch.int16)
 
 def add_phase_encoded(th_encoded: torch.Tensor, delta_th: float) -> torch.Tensor:
     """
     直接在编码空间添加相位偏移，避免解码-编码的量化误差
     这是无参数门（Z, S, T等）的关键优化
-    
+
     对于固定的相位偏移（如 π, π/2, π/4），这种方法可以显著减少量化误差
-    
+
     Args:
-        th_encoded: 编码后的相位值 (int8, 范围 [-128, 127])
+        th_encoded: 编码后的相位值 (int16, 范围 [-2048, 2047])
         delta_th: 要添加的相位偏移（弧度）
-    
+
     Returns:
-        编码后的新相位值 (int8)
+        编码后的新相位值 (int16)
     """
     # 将相位偏移转换为编码空间的偏移量
     delta_encoded = delta_th * TH_SCALE
-    
+
     # 在编码空间直接相加（转换为 float 以避免溢出）
     new_encoded = th_encoded.float() + delta_encoded
-    
-    # 将结果映射到 [-π, π] 对应的编码范围 [-128, 127]
-    # 使用模运算处理周期性：相位是 2π 周期性的，编码空间是 256 周期性的
-    # 先映射到 [0, 256)，再映射到 [-128, 128)
-    new_encoded_normalized = (new_encoded + 128) % 256 - 128
-    
-    # 处理边界情况：确保结果在 [-128, 127] 范围内
-    # 如果结果 >= 128，应该减去 256（因为相位是周期性的）
-    new_encoded_normalized = torch.where(new_encoded_normalized >= 128, 
-                                         new_encoded_normalized - 256, 
+
+    # 将结果映射到 [-π, π] 对应的编码范围 [-2048, 2047]
+    # 使用模运算处理周期性：相位是 2π 周期性的，编码空间是 4096 周期性的
+    # 先映射到 [0, 4096)，再映射到 [-2048, 2048)
+    new_encoded_normalized = (new_encoded + 2048) % 4096 - 2048
+
+    # 处理边界情况：确保结果在 [-2048, 2047] 范围内
+    # 如果结果 >= 2048，应该减去 4096（因为相位是周期性的）
+    new_encoded_normalized = torch.where(new_encoded_normalized >= 2048,
+                                         new_encoded_normalized - 4096,
                                          new_encoded_normalized)
-    
-    # 四舍五入并转换为 int8
-    result = torch.round(new_encoded_normalized).to(torch.int8)
-    
+
+    # 四舍五入并转换为 int16
+    result = torch.round(new_encoded_normalized).to(torch.int16)
+
     # 最终检查：确保结果在有效范围内（虽然理论上应该已经处理了）
-    result = torch.clamp(result, -128, 127)
-    
+    result = torch.clamp(result, -2048, 2047)
+
     return result
 
 def polar_to_complex_tensor(polar_vec: torch.Tensor, scale_vec: torch.Tensor) -> torch.Tensor:
@@ -152,8 +163,9 @@ def hadamard_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_
     c0 = polar_to_complex_tensor(z0_batch, scale_batch)
     c1 = polar_to_complex_tensor(z1_batch, scale_batch)
 
-    # 应用 Hadamard 矩阵到每个状态对
-    result = torch.matmul(torch.stack([c0, c1], dim=1), H_MAT_TORCH.t())
+    # 应用 Hadamard 矩阵到每个状态对 - 修正：移除转置
+    state_vector = torch.stack([c0, c1], dim=1)  # (batch_size, 2)
+    result = torch.matmul(state_vector, H_MAT_TORCH)  # 直接使用 H_MAT_TORCH
 
     # 分离结果并转换回三状态极坐标格式
     c0_result = result[:, 0]  # 第一个复数结果
@@ -163,9 +175,10 @@ def hadamard_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_
     polar_result0, scale_result0 = complex_to_polar_tensor(c0_result)
     polar_result1, scale_result1 = complex_to_polar_tensor(c1_result)
 
-    # 合并结果（注意：这里我们使用第一个结果的缩放因子，假设它们相似）
-    # 在实际实现中，可能需要更复杂的合并逻辑
-    return polar_result0.squeeze(), polar_result1.squeeze(), scale_result0
+    # 改进的缩放因子合并：取两个结果缩放因子的最大值，确保数值稳定性
+    combined_scale = torch.maximum(scale_result0, scale_result1)
+
+    return polar_result0.squeeze(), polar_result1.squeeze(), combined_scale.squeeze()
 
 def x_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """PyTorch 版本：X 门极坐标实现（三状态版本，批量版本）"""
@@ -233,8 +246,8 @@ def rx_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch:
     c, s = math.cos(theta / 2), math.sin(theta / 2)
     rx_mat = torch.tensor([[c, -1j * s], [-1j * s, c]], dtype=torch.complex64, device=device)
 
-    # 应用矩阵到每个状态对
-    result = torch.matmul(torch.stack([c0, c1], dim=1), rx_mat.t())
+    # 应用矩阵到每个状态对 - 修正：移除转置
+    result = torch.matmul(torch.stack([c0, c1], dim=1), rx_mat)
 
     # 分离结果并转换回三状态极坐标格式
     c0_result = result[:, 0]
@@ -258,8 +271,8 @@ def ry_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch:
     c, s = math.cos(theta / 2), math.sin(theta / 2)
     ry_mat = torch.tensor([[c, -s], [s, c]], dtype=torch.complex64, device=device)
 
-    # 应用矩阵到每个状态对
-    result = torch.matmul(torch.stack([c0, c1], dim=1), ry_mat.t())
+    # 应用矩阵到每个状态对 - 修正：移除转置
+    result = torch.matmul(torch.stack([c0, c1], dim=1), ry_mat)
 
     # 分离结果并转换回三状态极坐标格式
     c0_result = result[:, 0]
@@ -308,8 +321,8 @@ def hrh_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch
     h_mat = H_MAT_TORCH.to(device)
     hrh_mat = torch.matmul(h_mat, torch.matmul(rz_mat, h_mat))
 
-    # 应用矩阵到每个状态对
-    result = torch.matmul(torch.stack([c0, c1], dim=1), hrh_mat.t())
+    # 应用矩阵到每个状态对 - 修正：移除转置
+    result = torch.matmul(torch.stack([c0, c1], dim=1), hrh_mat)
 
     # 分离结果并转换回三状态极坐标格式
     c0_result = result[:, 0]
@@ -350,8 +363,8 @@ def u2_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch:
         torch.stack([inv_sqrt2 * exp_phi, inv_sqrt2 * exp_phi * exp_lambda])
     ])
 
-    # 应用矩阵到每个状态对
-    result = torch.matmul(torch.stack([c0, c1], dim=1), u2_mat.t())
+    # 应用矩阵到每个状态对 - 修正：移除转置
+    result = torch.matmul(torch.stack([c0, c1], dim=1), u2_mat)
 
     # 分离结果并转换回三状态极坐标格式
     c0_result = result[:, 0]
@@ -381,8 +394,8 @@ def u3_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch:
         torch.stack([exp_phi * s_val, exp_phi * exp_lambda * c_val])
     ])
 
-    # 应用矩阵到每个状态对
-    result = torch.matmul(torch.stack([c0, c1], dim=1), u3_mat.t())
+    # 应用矩阵到每个状态对 - 修正：移除转置
+    result = torch.matmul(torch.stack([c0, c1], dim=1), u3_mat)
 
     # 分离结果并转换回三状态极坐标格式
     c0_result = result[:, 0]
@@ -561,7 +574,7 @@ def apply_controlled_gate_polar_tensor(polar_vec: torch.Tensor, scale_vec: torch
 def apply_polar_gate_tensor(polar_vec: torch.Tensor, scale_vec: torch.Tensor, gate_func, *args, qubit_idx=0):
     """
     对指定的比特位应用量子门（三状态极坐标版本）
-    使用张量操作替换 for 循环以提高性能
+    使用正确的张量积结构进行状态配对
 
     Args:
         polar_vec: 极坐标状态向量，形状 (N, 2)
@@ -575,31 +588,43 @@ def apply_polar_gate_tensor(polar_vec: torch.Tensor, scale_vec: torch.Tensor, ga
     assert 2 ** nqubit == n, f"状态向量长度必须是 2 的幂次，当前长度: {n}"
     assert 0 <= qubit_idx < nqubit, f"比特位索引必须在 [0, {nqubit}) 范围内"
 
-    # 使用 PyTorch 张量操作生成所有需要处理的状态对索引
-    # 对于第 qubit_idx 个比特，我们需要处理所有第 qubit_idx 位为 0 的状态及其对应的第 qubit_idx 位为 1 的状态
+    # 正确的量子计算门应用逻辑：基于张量积结构的状态配对
+    # 对于第 qubit_idx 个比特，配对间隔是 2^qubit_idx，每个块的大小是 2^(qubit_idx+1)
 
-    # 生成所有状态索引
-    all_indices = torch.arange(n, device=device)
+    step = 1 << qubit_idx      # 配对间隔 = 2^qubit_idx
+    block_size = step << 1     # 块大小 = 2^(qubit_idx+1)
 
-    # 找到第 qubit_idx 位为 0 的所有状态索引
-    mask = (all_indices & (1 << qubit_idx)) == 0
-    idx0_batch = all_indices[mask]  # 第 qubit_idx 位为 0 的状态
+    # 使用张量操作收集所有需要处理的状态对
+    idx0_list = []
+    idx1_list = []
 
-    # 对应的第 qubit_idx 位为 1 的状态索引
-    idx1_batch = idx0_batch | (1 << qubit_idx)
+    # 遍历所有块
+    for base in range(0, n, block_size):
+        # 在每个块内，配对状态
+        for offset in range(step):
+            idx0 = base + offset
+            idx1 = base + offset + step
+            if idx1 < n:  # 确保索引有效
+                idx0_list.append(idx0)
+                idx1_list.append(idx1)
 
-    # 批量提取完整的状态向量
-    states0 = polar_vec[idx0_batch]  # 形状: (batch_size, 2) [幅度, 相位]
-    states1 = polar_vec[idx1_batch]  # 形状: (batch_size, 2) [幅度, 相位]
-    scale_batch = scale_vec[idx0_batch]  # 对应的缩放因子
+    # 转换为张量
+    if len(idx0_list) > 0:
+        idx0_batch = torch.tensor(idx0_list, dtype=torch.long, device=device)
+        idx1_batch = torch.tensor(idx1_list, dtype=torch.long, device=device)
 
-    # 批量应用门函数
-    new_states0, new_states1, new_scale_batch = gate_func(states0, states1, scale_batch, *args)
+        # 批量提取完整的状态向量
+        states0 = polar_vec[idx0_batch]  # 形状: (batch_size, 2) [幅度, 相位]
+        states1 = polar_vec[idx1_batch]  # 形状: (batch_size, 2) [幅度, 相位]
+        scale_batch = scale_vec[idx0_batch]  # 对应的缩放因子
 
-    # 将结果写回原向量
-    polar_vec[idx0_batch] = new_states0
-    polar_vec[idx1_batch] = new_states1
-    scale_vec[idx0_batch] = new_scale_batch
+        # 批量应用门函数
+        new_states0, new_states1, new_scale_batch = gate_func(states0, states1, scale_batch, *args)
+
+        # 将结果写回原向量
+        polar_vec[idx0_batch] = new_states0
+        polar_vec[idx1_batch] = new_states1
+        scale_vec[idx0_batch] = new_scale_batch
 
 # ===== 门定义字典 =====
 
@@ -697,9 +722,9 @@ def create_random_polar_state(n_amps: int) -> torch.Tensor:
     norm = torch.sqrt(torch.sum(torch.abs(complex_vec)**2))
     complex_vec = complex_vec / norm
 
-    # 转换为极坐标 int8
+    # 转换为极坐标 int16 (高精度)
     polar_vec = complex_to_polar_tensor(complex_vec)
-    return polar_vec.to(torch.int8)
+    return polar_vec.to(torch.int16)
 
 def polar_vec_to_string(polar_vec: torch.Tensor, scale_vec: torch.Tensor = None, indices=None) -> str:
     """将三状态极坐标向量转换为字符串表示"""

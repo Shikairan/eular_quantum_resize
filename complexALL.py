@@ -190,6 +190,7 @@ def apply_cz_complex(vec: List[complex], qubit1_idx: int, qubit2_idx: int):
 def apply_controlled_gate_complex(vec: List[complex], control_idx: int, target_idx: int, gate_func, *gate_params):
     """
     应用控制门（复数版本）
+    优化为向量化操作
 
     Args:
         vec: 状态向量
@@ -207,31 +208,45 @@ def apply_controlled_gate_complex(vec: List[complex], control_idx: int, target_i
     control_mask = 1 << control_idx
     target_mask = 1 << target_idx
 
-    # 找到所有控制比特为 1 的状态，对目标比特应用门
-    processed = set()
-    for i in range(n):
-        if (i & control_mask) != 0:  # 控制比特为 1
-            # 找到目标比特为 0 的状态（清除目标比特位）
-            i0 = i & ~target_mask
-            # 找到目标比特为 1 的状态（设置目标比特位）
-            i1 = i0 | target_mask
+    # 使用 NumPy 向量化操作找到所有控制比特为 1 且目标比特为 0 的状态
+    all_indices = np.arange(n)
+    control_set = (all_indices & control_mask) != 0  # 控制比特为 1
+    target_clear = (all_indices & target_mask) == 0  # 目标比特为 0
 
-            # 确保 i0 和 i1 都满足控制比特为 1
-            if (i0 & control_mask) != 0 and (i1 & control_mask) != 0:
-                pair_key = (min(i0, i1), max(i0, i1))
-                if pair_key not in processed:
-                    processed.add(pair_key)
-                    z0, z1 = vec[i0], vec[i1]
-                    if gate_params:
-                        vec[i0], vec[i1] = gate_func(z0, z1, *gate_params)
-                    else:
-                        vec[i0], vec[i1] = gate_func(z0, z1)
+    # 找到满足条件的状态索引
+    idx0_array = all_indices[control_set & target_clear]
+
+    # 计算对应的目标比特为 1 的状态索引
+    idx1_array = idx0_array | target_mask
+
+    # 验证这些状态对的有效性
+    valid_mask = idx1_array < n
+    idx0_array = idx0_array[valid_mask]
+    idx1_array = idx1_array[valid_mask]
+
+    # 批量处理状态对
+    if len(idx0_array) > 0:
+        # 批量提取状态
+        states0 = np.array([vec[i] for i in idx0_array])
+        states1 = np.array([vec[i] for i in idx1_array])
+
+        # 批量应用门函数
+        if gate_params:
+            new_states0, new_states1 = gate_func(states0, states1, *gate_params)
+        else:
+            new_states0, new_states1 = gate_func(states0, states1)
+
+        # 将结果写回原向量
+        for i, (idx0, idx1) in enumerate(zip(idx0_array, idx1_array)):
+            vec[idx0] = new_states0[i]
+            vec[idx1] = new_states1[i]
 
 # ===== 核心门应用函数 =====
 
 def apply_gate_pair(vec: List[complex], gate_func, *args, qubit_idx=0):
     """
     对指定的比特位应用量子门（复数版本）
+    使用 NumPy 向量化操作优化性能
 
     Args:
         vec: 状态向量，长度为 2^n
@@ -249,15 +264,38 @@ def apply_gate_pair(vec: List[complex], gate_func, *args, qubit_idx=0):
     # 每个块的大小是 2^(qubit_idx+1)
     block_size = step << 1
 
-    # 遍历所有需要处理的状态对
+    # 使用 NumPy 向量化操作收集所有状态对索引
+    idx0_list = []
+    idx1_list = []
+
+    # 遍历所有块，收集需要处理的状态对
     for base in range(0, n, block_size):
-        for offset in range(0, step):
+        for offset in range(step):
             idx0 = base + offset
             idx1 = base + offset + step
-            if args:
-                vec[idx0], vec[idx1] = gate_func(vec[idx0], vec[idx1], *args)
-            else:
-                vec[idx0], vec[idx1] = gate_func(vec[idx0], vec[idx1])
+            if idx1 < n:  # 确保索引有效
+                idx0_list.append(idx0)
+                idx1_list.append(idx1)
+
+    # 转换为 NumPy 数组以便向量化操作
+    if len(idx0_list) > 0:
+        idx0_array = np.array(idx0_list)
+        idx1_array = np.array(idx1_list)
+
+        # 批量提取状态对
+        states0 = np.array([vec[i] for i in idx0_array])
+        states1 = np.array([vec[i] for i in idx1_array])
+
+        # 批量应用门函数
+        if args:
+            new_states0, new_states1 = gate_func(states0, states1, *args)
+        else:
+            new_states0, new_states1 = gate_func(states0, states1)
+
+        # 将结果写回原向量
+        for i, (idx0, idx1) in enumerate(zip(idx0_array, idx1_array)):
+            vec[idx0] = new_states0[i]
+            vec[idx1] = new_states1[i]
 
 # ===== 门定义字典 =====
 
