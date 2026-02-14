@@ -15,8 +15,11 @@ else:
     print("CUDA not available, using CPU")
 
 # 导入相关模块
-from .KL import kl_divergence_manual
-from .wm_simple import create_normalized_vector
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from KL.KL import kl_divergence_manual
+from KL.wm_simple import create_normalized_vector
 
 
 def w(x, a=5.0):

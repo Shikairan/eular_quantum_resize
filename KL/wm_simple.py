@@ -14,7 +14,10 @@ else:
     print("CUDA not available, using CPU")
 
 # 导入KL模块
-from .KL import kl_divergence_manual
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from KL.KL import kl_divergence_manual
 
 
 def w(x, a=5.0):
