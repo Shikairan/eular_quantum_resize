@@ -276,4 +276,4 @@ def compare_three_implementations(n_qubits=4, a=30, b=0, c=0, use_weak_wm=False)
 
 if __name__ == "__main__":
     # 使用较小的参数进行测试
-    compare_three_implementations(n_qubits=6, a=40, b=0, c=0)
+    compare_three_implementations(n_qubits=20, a=180, b=0, c=0)

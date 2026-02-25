@@ -26,9 +26,10 @@ from utils import create_initial_vec_complex, random_sequence
 from polarALL_state_int16_wm import process_sequence_polar, polar_to_complex_tensor
 from vector_withWM import PolarVector
 
-# 创建一个禁用WM变换的向量实例用于兼容性测试
-vector_weak_wm = PolarVector(amplitude_dtype=torch.int16, phase_dtype=torch.int8, wm_a=4.3)
-
+# 兼容性测试用向量：与 polarALL_state_int16_wm 保持一致（int16+int16, WM开启）
+# 注意：phase_dtype 必须为 int16，否则 H 门等会引入巨大相位量化误差（int8 仅 256 级 vs int16 的 65535 级）
+vector_weak_wm = PolarVector(amplitude_dtype=torch.int16, phase_dtype=torch.int8, wm_a=8)
+print(f"Polar vector info: {vector_weak_wm.get_info()}")
 
 def bit_order_conversion(state_vector, n_qubits):
     """
@@ -164,9 +165,7 @@ def compare_implementations_polar_dq(n_qubits=4, a=30, b=0, c=0, use_weak_wm=Tru
             dq_state_converted = bit_order_conversion(dq_state_raw, n_qubits)
 
             polar_state_obj = polar_history[step + 1]
-            polar_complex = polar_to_complex_tensor(
-                polar_state_obj.get_polar_vec(), polar_state_obj.get_scale_vec()
-            ).cpu().numpy().flatten()
+            polar_complex = polar_to_complex_tensor(polar_state_obj).cpu().numpy().flatten()
 
             max_diff, rms_diff, mean_diff, error_percent = compute_state_difference(
                 polar_complex, dq_state_converted
@@ -188,4 +187,4 @@ def compare_implementations_polar_dq(n_qubits=4, a=30, b=0, c=0, use_weak_wm=Tru
 
 
 if __name__ == "__main__":
-    compare_implementations_polar_dq(n_qubits=14, a=80, b=0, c=0)  # 使用较小的参数进行测试
+    compare_implementations_polar_dq(n_qubits=22, a=120, b=0, c=0)  # 使用较小的参数进行测试
