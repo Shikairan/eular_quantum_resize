@@ -27,7 +27,7 @@ from polarALL_state_int16_wm import process_sequence_polar, polar_to_complex_ten
 from vector_withWM import PolarVector
 
 # 创建一个禁用WM变换的向量实例用于兼容性测试
-vector_weak_wm = PolarVector(amplitude_dtype=torch.int16, phase_dtype=torch.int8, wm_a=None)
+vector_weak_wm = PolarVector(amplitude_dtype=torch.int16, phase_dtype=torch.int8, wm_a=4.3)
 
 
 def bit_order_conversion(state_vector, n_qubits):
