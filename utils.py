@@ -150,7 +150,7 @@ def random_sequence_single_qubit_only(n: int, m: int, amp_n: int, n_qubits: int 
 
     return seq
 
-def create_initial_vec_complex(n_amps: int, avg=True) -> List[complex]:
+def create_initial_vec_complex(n_amps: int, avg=False) -> List[complex]:
     """
     创建归一化的复数初始向量（与 ALLeularV2.py 第903行格式相同）
 
@@ -164,7 +164,7 @@ def create_initial_vec_complex(n_amps: int, avg=True) -> List[complex]:
 
     # 创建随机复数向量
     if not avg:
-        complex_vector = [complex(random.random(), random.random()) for _ in range(n_amps)]
+        complex_vector = [complex(random.uniform(-10, 10), random.uniform(-10, 10)) for _ in range(n_amps)]
     else:
         complex_vector = [complex(1,0) for _ in range(n_amps)]
     # 归一化

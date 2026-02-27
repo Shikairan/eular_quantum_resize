@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-DeepQuantum vs polarALL_state_int16 vs polarALL_state_int16_wm 三系统兼容性测试
+DeepQuantum vs polarALL_state_int16 vs polarALL_state_int16_cdf 三系统兼容性测试
 
 同时比较三个量子计算系统的兼容性：
 - DeepQuantum: 标准量子计算库
 - polarALL_state_int16: 原始int16量化系统
-- polarALL_state_int16_wm: 带WM变换的增强量化系统
+- polarALL_state_int16_cdf: 极坐标CDF量化系统
 
 使用相同的初始向量和门序列，确保公平比较
 """
@@ -29,7 +29,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils import create_initial_vec_complex, random_sequence
 from polarALL_state_int16 import process_sequence_polar as process_polar_original, polar_to_complex_tensor as polar_to_complex_original
-from polarALL_state_int16_wm import process_sequence_polar as process_polar_wm
+from polarALL_state_int16_cdf import process_sequence_polar as process_polar_wm
 from vector_withWM import PolarVector
 
 # 禁用WM变换的向量实例，用于兼容性测试（与 test_polar_wm_dq.py 一致）
@@ -93,7 +93,7 @@ def compare_three_implementations(n_qubits=4, a=30, b=0, c=0, use_weak_wm=False)
     print("=" * 90)
     print(f"系统配置: {n_qubits} 量子比特")
     print(f"序列参数: a={a}, b={b}, c={c}")
-    print(f"WM系统弱变换: {'启用(兼容模式)' if use_weak_wm else '禁用(真实WM)'}")
+    print(f"CDF系统弱变换: {'启用(兼容模式)' if use_weak_wm else '禁用(增强模式)'}")
     print()
 
     # 1. 创建初始向量和序列（所有系统使用相同的）
@@ -107,15 +107,15 @@ def compare_three_implementations(n_qubits=4, a=30, b=0, c=0, use_weak_wm=False)
     print(f"量子门序列长度: {len(seq)}")
     print()
 
-    # 临时修改 WM 系统的 vector 为弱变换模式（与 test_polar_wm_dq 一致）
+    # 临时修改 CDF 系统的 vector 为弱变换模式（与 test_polar_wm_dq 一致）
     if use_weak_wm:
-        import polarALL_state_int16_wm
-        original_vector = polarALL_state_int16_wm.vector
-        polarALL_state_int16_wm.vector = vector_weak_wm
+        import polarALL_state_int16_cdf
+        original_vector = polarALL_state_int16_cdf.vector
+        polarALL_state_int16_cdf.vector = vector_weak_wm
 
     try:
-        # 2. 运行 polarALL_state_int16_wm (带WM的系统)
-        print("运行 polarALL_state_int16_wm...")
+        # 2. 运行 polarALL_state_int16_cdf (CDF系统)
+        print("运行 polarALL_state_int16_cdf...")
         polar_wm_final, polar_wm_history = process_polar_wm(
             initial_vec.copy(), seq, verbose=False
         )
@@ -140,11 +140,11 @@ def compare_three_implementations(n_qubits=4, a=30, b=0, c=0, use_weak_wm=False)
         print("初始状态对比:")
         print("-" * 60)
 
-        # WM系统 vs DeepQuantum
+        # CDF系统 vs DeepQuantum
         wm_max_diff, wm_rms_diff, wm_mean_diff, wm_error_percent = compute_state_difference(
             polar_wm_initial_complex, dq_initial_converted
         )
-        print(f"WM系统   vs DeepQ: max={wm_max_diff:.2e}, rms={wm_rms_diff:.2e}, "
+        print(f"CDF系统   vs DeepQ: max={wm_max_diff:.2e}, rms={wm_rms_diff:.2e}, "
               f"mean={wm_mean_diff:.2e}, errorP={wm_error_percent:.2e}")
 
         # 原始系统 vs DeepQuantum
@@ -154,11 +154,11 @@ def compare_three_implementations(n_qubits=4, a=30, b=0, c=0, use_weak_wm=False)
         print(f"原始系统 vs DeepQ: max={orig_max_diff:.2e}, rms={orig_rms_diff:.2e}, "
               f"mean={orig_mean_diff:.2e}, errorP={orig_error_percent:.2e}")
 
-        # WM系统 vs 原始系统
+        # CDF系统 vs 原始系统
         wm_orig_max_diff, wm_orig_rms_diff, wm_orig_mean_diff, wm_orig_error_percent = compute_state_difference(
             polar_wm_initial_complex, polar_orig_initial_complex
         )
-        print(f"WM系统   vs 原始: max={wm_orig_max_diff:.2e}, rms={wm_orig_rms_diff:.2e}, "
+        print(f"CDF系统   vs 原始: max={wm_orig_max_diff:.2e}, rms={wm_orig_rms_diff:.2e}, "
               f"mean={wm_orig_mean_diff:.2e}, errorP={wm_orig_error_percent:.2e}")
         print()
 
@@ -195,7 +195,7 @@ def compare_three_implementations(n_qubits=4, a=30, b=0, c=0, use_weak_wm=False)
 
         print("各量子门后的状态对比:")
         print("-" * 100)
-        print(f"{'Gate Operation':<25} {'WM vs DeepQ':<12} {'Orig vs DeepQ':<12} {'WM vs Orig':<12}")
+        print(f"{'Gate Operation':<25} {'CDF vs DeepQ':<12} {'Orig vs DeepQ':<12} {'CDF vs Orig':<12}")
         print("-" * 100)
 
         for step, gate_tuple in enumerate(seq):
@@ -232,7 +232,7 @@ def compare_three_implementations(n_qubits=4, a=30, b=0, c=0, use_weak_wm=False)
                 polar_orig_state, polar_orig_scale
             ).cpu().numpy().flatten()
 
-            # 计算WM系统误差
+            # 计算CDF系统误差
             wm_max_diff, wm_rms_diff, wm_mean_diff, wm_error_percent = compute_state_difference(
                 polar_wm_complex, dq_state_converted
             )
@@ -242,7 +242,7 @@ def compare_three_implementations(n_qubits=4, a=30, b=0, c=0, use_weak_wm=False)
                 polar_orig_complex, dq_state_converted
             )
 
-            # 计算WM vs 原始系统误差
+            # 计算CDF vs 原始系统误差
             wm_orig_max_diff, wm_orig_rms_diff, wm_orig_mean_diff, wm_orig_error_percent = compute_state_difference(
                 polar_wm_complex, polar_orig_complex
             )
@@ -265,15 +265,15 @@ def compare_three_implementations(n_qubits=4, a=30, b=0, c=0, use_weak_wm=False)
         print("\n测试完成!")
         print("✅ DeepQ: DeepQuantum作为标准参考")
         print("✅ 原始系统: polarALL_state_int16 (int16量化)")
-        print("✅ WM系统: polarALL_state_int16_wm (带WM变换)")
+        print("✅ CDF系统: polarALL_state_int16_cdf (极坐标CDF量化)")
 
     finally:
         # 恢复原始 vector 实例
         if use_weak_wm:
-            import polarALL_state_int16_wm
-            polarALL_state_int16_wm.vector = original_vector
+            import polarALL_state_int16_cdf
+            polarALL_state_int16_cdf.vector = original_vector
 
 
 if __name__ == "__main__":
     # 使用较小的参数进行测试
-    compare_three_implementations(n_qubits=14, a=180, b=0, c=0)
+    compare_three_implementations(n_qubits=16, a=80, b=0, c=0)

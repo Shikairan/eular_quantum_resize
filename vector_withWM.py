@@ -351,13 +351,11 @@ class PolarVector(BasePolarVector):
         if isinstance(r_encoded, PolarVectorEncoded):
             # 如果传入的是PolarVectorEncoded对象，直接使用其数据和元信息（显式参数可覆盖）
             r_encoded_tensor = r_encoded.r_encoded
-            scale_vec_tensor = r_encoded.scale_vec
             current_max = amplitude_max if amplitude_max is not None else r_encoded.current_max
             wm_a_val = wm_a if wm_a is not None else r_encoded.wm_a
         else:
             # 传统调用方式
             r_encoded_tensor = r_encoded
-            scale_vec_tensor = scale_vec
             current_max = amplitude_max if amplitude_max is not None else self.current_max
             wm_a_val = wm_a if wm_a is not None else self.a
 
@@ -371,11 +369,10 @@ class PolarVector(BasePolarVector):
             #q = torch.clamp(q, min=1.0)
             r_decoded = self.m_max_normalized(q, wm_a_val, current_max)
         else:
-            # 标准 polar 解码过程
-            r_base = (r_encoded_tensor.float() + abs(self.r_int_min)) / (self.r_scale - 1.0) * (self.R_MAX - self.R_MIN) + self.R_MIN
-            r_decoded = r_base * scale_vec_tensor
+            # 标准 polar 解码过程（不再使用动态 scale_vec，直接还原到 [R_MIN, R_MAX]）
+            r_decoded = (r_encoded_tensor.float() + abs(self.r_int_min)) / (self.r_scale - 1.0) * (self.R_MAX - self.R_MIN) + self.R_MIN
         #print("r_decoded shape:",r_decoded.shape)
-        return r_decoded
+        return r_decoded.to(self.device)
 
     def encode_r_tensor(self, r: torch.Tensor, amplitude_max: Optional[float] = None) -> PolarVectorEncoded:
         """
@@ -393,26 +390,18 @@ class PolarVector(BasePolarVector):
             # 应用WM变换并量化：w(r) -> f(w(r))
             r_wm = self.w_max_normalized(r, self.a, current_max)
             r_quantized = self.f_quantize(r_wm)
-            # WM模式下幅度已归一化，无动态缩放
-            scale_vec = torch.ones_like(r, device=self.device)
         else:
-            # 不使用WM变换，使用原始polar编码逻辑
+            # 不使用WM变换：直接在固定范围 [R_MIN, R_MAX] 内做线性量化，不再使用动态 scale_vec
             self.current_max = None
             current_max = None
 
-            # 直接使用原始编码逻辑（模拟vector.py的行为）
-            scale_vec = torch.ones_like(r, device=self.device)
-            large_mask = r > self.R_MAX
-            if large_mask.any():
-                scale_vec = torch.where(large_mask, r / self.R_MAX, scale_vec)
-
-            r_scaled = r / scale_vec
-            r_scaled = torch.clamp(r_scaled, self.R_MIN, self.R_MAX)
-
-            r_scaled_f64 = r_scaled.double()
-            encoded_f64 = (r_scaled_f64 - self.R_MIN) / (self.R_MAX - self.R_MIN) * (self.r_scale - 1.0) - abs(self.r_int_min)
+            r_clamped = torch.clamp(r, self.R_MIN, self.R_MAX)
+            r_f64 = r_clamped.double()
+            encoded_f64 = (r_f64 - self.R_MIN) / (self.R_MAX - self.R_MIN) * (self.r_scale - 1.0) - abs(self.r_int_min)
             r_quantized = torch.round(encoded_f64).to(self.amplitude_dtype)
-            scale_vec = scale_vec
+
+        # 为了兼容外部接口，仍然返回一个全 1 的 scale_vec，但其不再参与数值计算
+        scale_vec = torch.ones_like(r, device=self.device)
 
         return PolarVectorEncoded(r_quantized, scale_vec, current_max, self.a if self.wm_enabled else None, self)
 

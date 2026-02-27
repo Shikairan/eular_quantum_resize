@@ -52,7 +52,7 @@ def hadamard_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_
     state_vector = torch.stack([c0, c1], dim=1)  # (batch_size, 2)
     # 确保矩阵与向量有相同的 dtype
     h_mat = H_MAT_TORCH.to(dtype=state_vector.dtype, device=state_vector.device)
-    result = torch.matmul(state_vector, h_mat)
+    result = torch.matmul(state_vector, h_mat.T)
 
     # 分离结果并转换回极坐标格式
     c0_result = result[:, 0]  # 第一个复数结果
@@ -141,7 +141,7 @@ def rx_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch:
     rx_mat = torch.tensor([[c, -1j * s], [-1j * s, c]], dtype=dtype, device=device)
 
     # 应用矩阵到每个状态对
-    result = torch.matmul(torch.stack([c0, c1], dim=1), rx_mat)
+    result = torch.matmul(rx_mat, torch.stack([c0, c1], dim=1))
 
     # 分离结果并转换回极坐标格式
     c0_result = result[:, 0]
@@ -168,7 +168,7 @@ def ry_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch:
     ry_mat = torch.tensor([[c, -s], [s, c]], dtype=dtype, device=device)
 
     # 应用矩阵到每个状态对
-    result = torch.matmul(torch.stack([c0, c1], dim=1), ry_mat)
+    result = torch.matmul(ry_mat, torch.stack([c0, c1], dim=1))
 
     # 分离结果并转换回极坐标格式
     c0_result = result[:, 0]
@@ -215,7 +215,7 @@ def u2_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch:
         torch.stack([torch.tensor(inv_sqrt2, dtype=dtype, device=device), -inv_sqrt2 * exp_lambda]),
         torch.stack([inv_sqrt2 * exp_phi, inv_sqrt2 * exp_phi * exp_lambda])
     ])
-    result = torch.matmul(torch.stack([c0, c1], dim=1), u2_mat)
+    result = torch.matmul(u2_mat, torch.stack([c0, c1], dim=1))
     polar_result0, scale_result0 = vector.complex_to_polar_tensor(result[:, 0])
     polar_result1, scale_result1 = vector.complex_to_polar_tensor(result[:, 1])
     combined_scale = torch.maximum(scale_result0, scale_result1)
@@ -235,7 +235,7 @@ def u3_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch:
         torch.stack([torch.tensor(c_val, dtype=dtype, device=device), -exp_lambda * s_val]),
         torch.stack([exp_phi * s_val, exp_phi * exp_lambda * c_val])
     ])
-    result = torch.matmul(torch.stack([c0, c1], dim=1), u3_mat)
+    result = torch.matmul(u3_mat, torch.stack([c0, c1], dim=1))
     polar_result0, scale_result0 = vector.complex_to_polar_tensor(result[:, 0])
     polar_result1, scale_result1 = vector.complex_to_polar_tensor(result[:, 1])
     combined_scale = torch.maximum(scale_result0, scale_result1)
@@ -266,14 +266,7 @@ def apply_polar_gate_tensor(polar_vec: torch.Tensor, scale_vec: torch.Tensor,
                           gate_func, *gate_params, qubit_idx: int = 0) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     统一的极坐标量子门应用函数（int16 + int8 混合版本）
-    使用正确的张量积结构进行状态配对
-
-    Args:
-        polar_vec: 极坐标状态向量 (n_amps, 2) - 第一列 int16 (幅度)，第二列 int8 (相位)
-        scale_vec: 缩放向量 (n_amps,)
-        gate_func: 门函数
-        *gate_params: 门参数
-        qubit_idx: 目标量子比特索引（0 表示最低位）
+    使用向量化张量操作进行状态配对，参考 polarALL_state_int16_cdf 优化
 
     Returns:
         (new_polar_vec, new_scale_vec): 更新后的极坐标向量和缩放向量
@@ -283,40 +276,19 @@ def apply_polar_gate_tensor(polar_vec: torch.Tensor, scale_vec: torch.Tensor,
     assert 2 ** n_qubits == n, f"状态向量长度必须是 2 的幂次，当前长度: {n}"
     assert 0 <= qubit_idx < n_qubits, f"比特位索引必须在 [0, {n_qubits}) 范围内"
 
-    # 正确的量子计算门应用逻辑：基于张量积结构的状态配对
-    # 对于第 qubit_idx 个比特，配对间隔是 2^qubit_idx，每个块的大小是 2^(qubit_idx+1)
+    # 向量化索引生成：第 qubit_idx 比特为 0 的 idx0，对应比特为 1 的 idx1
+    all_indices = torch.arange(n, device=device, dtype=torch.long)
+    qubit_mask = 1 << qubit_idx
+    idx0_batch = all_indices[(all_indices & qubit_mask) == 0]
+    idx1_batch = idx0_batch | qubit_mask
 
-    step = 1 << qubit_idx      # 配对间隔 = 2^qubit_idx
-    block_size = step << 1     # 块大小 = 2^(qubit_idx+1)
+    if len(idx0_batch) > 0:
+        states0 = polar_vec[idx0_batch]
+        states1 = polar_vec[idx1_batch]
+        scale_batch = scale_vec[idx0_batch]
 
-    # 使用张量操作收集所有需要处理的状态对
-    idx0_list = []
-    idx1_list = []
-
-    # 遍历所有块
-    for base in range(0, n, block_size):
-        # 在每个块内，配对状态
-        for offset in range(step):
-            idx0 = base + offset
-            idx1 = base + offset + step
-            if idx1 < n:  # 确保索引有效
-                idx0_list.append(idx0)
-                idx1_list.append(idx1)
-
-    # 转换为张量
-    if len(idx0_list) > 0:
-        idx0_batch = torch.tensor(idx0_list, dtype=torch.long, device=device)
-        idx1_batch = torch.tensor(idx1_list, dtype=torch.long, device=device)
-
-        # 批量提取完整的状态向量
-        states0 = polar_vec[idx0_batch]  # 形状: (batch_size, 2) [幅度, 相位]
-        states1 = polar_vec[idx1_batch]  # 形状: (batch_size, 2) [幅度, 相位]
-        scale_batch = scale_vec[idx0_batch]  # 对应的缩放因子
-
-        # 应用门函数
         new_states0, new_states1, new_scale_batch = gate_func(states0, states1, scale_batch, *gate_params)
 
-        # 将结果写回原向量
         polar_vec[idx0_batch] = new_states0
         polar_vec[idx1_batch] = new_states1
         scale_vec[idx0_batch] = new_scale_batch
@@ -470,32 +442,33 @@ def apply_controlled_gate_polar_tensor(polar_vec: torch.Tensor, scale_vec: torch
 
 def apply_cnot_polar_tensor(polar_vec: torch.Tensor, scale_vec: torch.Tensor, control_idx: int, target_idx: int):
     """
-    应用 CNOT 门（与 polarALL_state_3 一致）
-    当控制比特为 |1⟩ 时，翻转目标比特（交换 |...0⟩ 与 |...1⟩ 的幅度）
+    应用 CNOT 门：当控制比特为 |1⟩ 时，交换 |...0⟩ 与 |...1⟩
+    使用向量化批处理，参考 polarALL_state_int16_cdf 优化
     """
     n = polar_vec.shape[0]
     n_qubit = int(math.log2(n))
-    assert 2 ** n_qubit == n
-    assert control_idx != target_idx
+    assert 2 ** n_qubit == n and control_idx != target_idx
     assert 0 <= control_idx < n_qubit and 0 <= target_idx < n_qubit
 
     control_mask = 1 << control_idx
     target_mask = 1 << target_idx
 
-    indices_to_swap = []
-    for i in range(n):
-        if (i & control_mask) != 0:  # 控制比特为 1
-            j = i ^ target_mask  # 翻转目标比特
-            if i < j:  # 避免重复处理
-                indices_to_swap.append((i, j))
+    # 向量化生成需交换的索引对 (i < j)
+    all_indices = torch.arange(n, device=device, dtype=torch.long)
+    control_set = (all_indices & control_mask) != 0
+    idx0 = all_indices[control_set]
+    idx1 = idx0 ^ target_mask
+    keep = idx0 < idx1
+    idx0 = idx0[keep]
+    idx1 = idx1[keep]
 
-    for i, j in indices_to_swap:
-        temp = polar_vec[i].clone()
-        temp_scale = scale_vec[i].clone()
-        polar_vec[i] = polar_vec[j]
-        scale_vec[i] = scale_vec[j]
-        polar_vec[j] = temp
-        scale_vec[j] = temp_scale
+    if len(idx0) > 0:
+        temp_polar = polar_vec[idx0].clone()
+        temp_scale = scale_vec[idx0].clone()
+        polar_vec[idx0] = polar_vec[idx1]
+        scale_vec[idx0] = scale_vec[idx1]
+        polar_vec[idx1] = temp_polar
+        scale_vec[idx1] = temp_scale
 
 
 def apply_ch_polar_tensor(polar_vec: torch.Tensor, scale_vec: torch.Tensor, control_idx: int, target_idx: int):
@@ -551,21 +524,24 @@ def apply_cu3_polar_tensor(polar_vec: torch.Tensor, scale_vec: torch.Tensor, con
 def apply_cz_polar_tensor(polar_vec: torch.Tensor, scale_vec: torch.Tensor,
                          control_idx: int, target_idx: int) -> None:
     """
-    应用 CZ 门（与 polarALL_state_3 完全一致）
-    CZ 门：当控制比特与目标比特都为 |1⟩ 时，相位翻转 π
+    应用 CZ 门：当控制比特与目标比特都为 |1⟩ 时，相位翻转 π
+    使用向量化批处理，参考 polarALL_state_int16_cdf 优化
     """
     n = polar_vec.shape[0]
     n_qubit = int(math.log2(n))
-    assert 2 ** n_qubit == n
-    assert control_idx != target_idx
+    assert 2 ** n_qubit == n and control_idx != target_idx
     assert 0 <= control_idx < n_qubit and 0 <= target_idx < n_qubit
 
     mask1 = 1 << control_idx
     mask2 = 1 << target_idx
 
-    for i in range(n):
-        if (i & mask1) != 0 and (i & mask2) != 0:  # 两个比特都为 1
-            polar_vec[i, 1] = vector.add_phase_encoded(polar_vec[i:i+1, 1], math.pi)[0]
+    # 向量化找出控制与目标皆为 1 的索引
+    all_indices = torch.arange(n, device=device, dtype=torch.long)
+    mask_both = ((all_indices & mask1) != 0) & ((all_indices & mask2) != 0)
+    indices = all_indices[mask_both]
+
+    if len(indices) > 0:
+        polar_vec[indices, 1] = vector.add_phase_encoded(polar_vec[indices, 1], math.pi)
 
 
 # ===== 辅助函数 =====
