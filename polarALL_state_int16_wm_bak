@@ -268,19 +268,31 @@ def apply_polar_gate_tensor(polar_vec: torch.Tensor, scale_vec: torch.Tensor,
     assert 2 ** n_qubits == n, f"状态向量长度必须是 2 的幂次，当前长度: {n}"
     assert 0 <= qubit_idx < n_qubits, f"比特位索引必须在 [0, {n_qubits}) 范围内"
 
-    # 简化的单比特门配对逻辑：使用张量操作直接生成配对索引
-    # 对于第 qubit_idx 个比特：idx0 为第k比特为0的状态，idx1 为对应的第k比特为1的状态
+    # 正确的量子计算门应用逻辑：基于张量积结构的状态配对
+    # 对于第 qubit_idx 个比特，配对间隔是 2^qubit_idx，每个块的大小是 2^(qubit_idx+1)
 
-    all_indices = torch.arange(n, device=device, dtype=torch.long)
-    qubit_mask = 1 << qubit_idx
+    step = 1 << qubit_idx      # 配对间隔 = 2^qubit_idx
+    block_size = step << 1     # 块大小 = 2^(qubit_idx+1)
 
-    # 找到所有第qubit_idx比特为0的状态
-    idx0_batch = all_indices[(all_indices & qubit_mask) == 0]
+    # 使用张量操作收集所有需要处理的状态对
+    idx0_list = []
+    idx1_list = []
 
-    # 对应的第qubit_idx比特为1的状态
-    idx1_batch = idx0_batch | qubit_mask
+    # 遍历所有块
+    for base in range(0, n, block_size):
+        # 在每个块内，配对状态
+        for offset in range(step):
+            idx0 = base + offset
+            idx1 = base + offset + step
+            if idx1 < n:  # 确保索引有效
+                idx0_list.append(idx0)
+                idx1_list.append(idx1)
 
-    if len(idx0_batch) > 0:
+    # 转换为张量
+    if len(idx0_list) > 0:
+        idx0_batch = torch.tensor(idx0_list, dtype=torch.long, device=device)
+        idx1_batch = torch.tensor(idx1_list, dtype=torch.long, device=device)
+
         # 批量提取完整的状态向量
         states0 = polar_vec[idx0_batch]  # 形状: (batch_size, 2) [幅度, 相位]
         states1 = polar_vec[idx1_batch]  # 形状: (batch_size, 2) [幅度, 相位]
@@ -297,8 +309,6 @@ def apply_polar_gate_tensor(polar_vec: torch.Tensor, scale_vec: torch.Tensor,
 
         # 门后更新 amplitude_max
         out_amplitude_max = new_amplitude_max
-    else:
-        out_amplitude_max = amplitude_max if amplitude_max is not None else 1.0
 
     return polar_vec, scale_vec, out_amplitude_max
 

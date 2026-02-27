@@ -18,6 +18,7 @@ import os
 # 导入基础vector类用于继承
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vector import PolarVector as BasePolarVector
+from cdf.cdf_torch import create_adaptive_quantizer, quantize_adaptive, dequantize_adaptive
 
 
 class PolarVectorEncoded:
@@ -133,8 +134,9 @@ class PolarStateEncoded:
             self.polar_vec[:, 0], self.scale_vec,
             self.amplitude_max, self.wm_a, self.vector_instance
         )
-        r = self.vector_instance.decode_r_tensor(r_encoded_obj)
+        r = self.vector_instance.decode_r_tensor(r_encoded_obj).to("cuda:0")
         th = self.vector_instance.decode_th_tensor(self.polar_vec[:, 1])
+        #print(r.shape, th.shape, r.device, th.device)
         return torch.complex(r * torch.cos(th), r * torch.sin(th))
 
     def update_polar_vec(self, new_polar_vec: torch.Tensor, new_scale_vec: torch.Tensor = None,
@@ -256,7 +258,11 @@ class PolarVector(BasePolarVector):
         Returns:
             WM变换后的值
         """
-        return (1/X_max)*torch.log(x+1)
+        self.quantizer = create_adaptive_quantizer(x, bits=16, device=self.device)
+        self.q, self.params = quantize_adaptive(x, self.quantizer)
+        #print(x.shape, self.q.shape)
+        return self.q #torch.log(x/X_max+1) / 0.69315
+
         #return torch.exp(a * (x - X_max)) #torch.exp(a * (x / X_max - 1))
         #return x
   
@@ -275,7 +281,8 @@ class PolarVector(BasePolarVector):
         scale = 65535.0 if self.amplitude_dtype == torch.int16 else 255.0
         #return x/65535.0   #X_max + (1/a) * torch.log(x / 65535)
         #return X_max + (1/a) * torch.log(x / scale)
-        return torch.exp((x*X_max/scale)) - 1
+        #return X_max*(torch.exp(x*0.69315/scale) - 1)
+        return dequantize_adaptive(x, self.params)
 
     def f_quantize(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -287,8 +294,8 @@ class PolarVector(BasePolarVector):
         Returns:
             量化后的整数值
         """
-        scale = 65535.0 if self.amplitude_dtype == torch.int16 else 255.0
-        return torch.round(scale * x).to(self.amplitude_dtype)
+        #scale = 65535.0 if self.amplitude_dtype == torch.int16 else 255.0
+        return self.q #torch.round(scale * x).to(self.amplitude_dtype)
 
     def apply_wm_transform(self, x: torch.Tensor, return_intermediates: bool = False) -> Union[torch.Tensor, dict]:
         """
@@ -319,6 +326,7 @@ class PolarVector(BasePolarVector):
                 'Y': m_result
             }
         else:
+
             return m_result
 
     # ===== 集成WM变换的编解码函数 =====
@@ -366,7 +374,7 @@ class PolarVector(BasePolarVector):
             # 标准 polar 解码过程
             r_base = (r_encoded_tensor.float() + abs(self.r_int_min)) / (self.r_scale - 1.0) * (self.R_MAX - self.R_MIN) + self.R_MIN
             r_decoded = r_base * scale_vec_tensor
-
+        #print("r_decoded shape:",r_decoded.shape)
         return r_decoded
 
     def encode_r_tensor(self, r: torch.Tensor, amplitude_max: Optional[float] = None) -> PolarVectorEncoded:
@@ -438,8 +446,10 @@ class PolarVector(BasePolarVector):
                                amplitude_max: Optional[float] = None,
                                wm_a: Optional[float] = None) -> torch.Tensor:
         """极坐标 -> 复数；可选传入 amplitude_max、wm_a 用于 WM 解码，覆盖 vector 实例值"""
-        r = self.decode_r_tensor(polar_vec[:, 0], scale_vec, amplitude_max=amplitude_max, wm_a=wm_a)
+        #print("polar shape:",polar_vec.shape, scale_vec.shape)
+        r = self.decode_r_tensor(polar_vec[:, 0], scale_vec, amplitude_max=amplitude_max, wm_a=wm_a).to("cuda:0")
         th = self.decode_th_tensor(polar_vec[:, 1])
+
         return torch.complex(r * torch.cos(th), r * torch.sin(th))
 
     def complex_to_polar_state(self, complex_vec: torch.Tensor,
