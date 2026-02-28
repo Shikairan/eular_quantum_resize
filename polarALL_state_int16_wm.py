@@ -614,41 +614,32 @@ def process_sequence_polar(initial_vec: List[complex], seq: List[Tuple], verbose
         print(f"初始状态（前8个）:")
         print(polar_vec_to_string(initial_state.get_polar_vec(), initial_state.get_scale_vec(), range(min(8, n_amps))))
 
-    # 处理每个门
+    # 处理每个门（支持 4 元组向后兼容 + 统一 5 元组格式）
     current_state = initial_state
     for step, gate_tuple in enumerate(seq):
-        # 解析序列格式：支持不同的参数数量
-        if len(gate_tuple) == 4:
+        if len(gate_tuple) == 5:
+            gate_name, _, gate_params, control_idx, target_idx = gate_tuple
+            if not isinstance(gate_params, list):
+                gate_params = []
+            is_controlled = control_idx is not None
+        elif len(gate_tuple) == 4:
             gate_name = gate_tuple[0]
             gate_params = gate_tuple[2] if len(gate_tuple) > 2 and isinstance(gate_tuple[2], list) else []
             if gate_name.startswith('C') or gate_name in ['CNOT', 'CZ']:
-                # 控制门 4元组: (name, params, control_idx, target_idx)
                 control_idx, target_idx = gate_tuple[2], gate_tuple[3]
                 is_controlled = True
             else:
-                # 单比特门: (name, param_str/params, _, qubit_idx)
-                qubit_idx = gate_tuple[3]
-                control_idx = None
-                target_idx = qubit_idx
+                control_idx, target_idx = None, gate_tuple[3]
                 is_controlled = False
-        elif len(gate_tuple) == 5:
-            # 控制门 5元组: (name, param_str, params, control_idx, target_idx)
-            gate_name, _, gate_params, control_idx, target_idx = gate_tuple
-            is_controlled = True
         else:
-            raise ValueError(f"无效的序列格式: {gate_tuple}")
-
-        # 检查是否是控制门（额外确认）
-        is_controlled = is_controlled or (gate_name.startswith('C') or gate_name in ['CNOT', 'CZ'])
+            raise ValueError(f"无效的序列格式，需 4 或 5 元组: {gate_tuple}")
 
         if is_controlled:
-            # 控制门：使用序列中指定的控制和目标比特位
             current_state = apply_gate_polar_tensor(current_state, gate_name, gate_params, control_idx, target_idx)
             gate_info = f"{gate_name}(控制={control_idx}, 目标={target_idx})"
         else:
-            # 单比特门：使用序列中指定的比特位
-            current_state = apply_gate_polar_tensor(current_state, gate_name, gate_params, target_idx=qubit_idx)
-            gate_info = f"{gate_name}(比特={qubit_idx})"
+            current_state = apply_gate_polar_tensor(current_state, gate_name, gate_params, target_idx=target_idx)
+            gate_info = f"{gate_name}(比特={target_idx})"
 
         # 记录这一步的状态
         state_history.append(current_state.clone())

@@ -11,6 +11,7 @@
 
 import torch
 import math
+import copy
 from typing import List, Tuple, Optional, Union
 import sys
 import os
@@ -72,13 +73,15 @@ class PolarStateEncoded:
         """
         初始化PolarStateEncoded
 
+        必须深拷贝 params，避免与外部共享引用，防止后续修改污染解码参数。
+
         Args:
             polar_vec: 极坐标向量 (n_amps, 2) - [r_encoded, th_encoded]
             params: CDF解码参数
             vector_instance: 对应的PolarVector实例
         """
         self.polar_vec = polar_vec
-        self.params = params
+        self.params = copy.deepcopy(params) if isinstance(params, dict) else params
         self.vector_instance = vector_instance
 
     def __repr__(self):
@@ -114,22 +117,26 @@ class PolarStateEncoded:
 
         Args:
             new_polar_vec: 新的极坐标向量
-            new_params: 可选，新的 CDF 参数（若 polar_vec 来自新编码则需更新）
+            new_params: 可选，新的 CDF 参数（若 polar_vec 来自新编码则需更新，内部会深拷贝）
         """
         self.polar_vec = new_polar_vec
         if new_params is not None:
-            self.params = new_params
+            self.params = copy.deepcopy(new_params) if isinstance(new_params, dict) else new_params
 
     def clone(self) -> 'PolarStateEncoded':
         """
         克隆PolarStateEncoded对象
 
+        必须深拷贝 params，否则历史状态共享解码参数，导致后续门操作污染已存储状态，
+        引发 CDF 控制门误差爆炸（1e+02 级别）。
+
         Returns:
             新的PolarStateEncoded对象
         """
+        params_copy = copy.deepcopy(self.params) if isinstance(self.params, dict) else self.params
         return PolarStateEncoded(
             self.polar_vec.clone(),
-            self.params,
+            params_copy,
             self.vector_instance
         )
 

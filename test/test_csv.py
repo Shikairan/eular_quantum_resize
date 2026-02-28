@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DeepQuantum vs polarALL_state_int16 vs polarALL_state_int16_cdf 三系统兼容性测试
+DeepQuantum vs polarALL_state_int16 vs polarALL_state_int16_cdf 三系统兼容性测试 - CSV输出版本
 
 同时比较三个量子计算系统的兼容性：
 - DeepQuantum: 标准量子计算库
@@ -8,6 +8,7 @@ DeepQuantum vs polarALL_state_int16 vs polarALL_state_int16_cdf 三系统兼容�
 - polarALL_state_int16_cdf: 极坐标CDF量化系统
 
 使用相同的初始向量和门序列，确保公平比较
+结果将保存到CSV文件中而不是打印到控制台
 """
 
 import sys
@@ -15,6 +16,8 @@ import os
 import math
 import numpy as np
 import torch
+import csv
+from datetime import datetime
 
 # 添加 deepquantum 到路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'deepquantum/src'))
@@ -91,60 +94,52 @@ def compute_state_difference(state_a, state_b):
         state_b: 第二个量子态向量（numpy数组或可转换为numpy的序列）
 
     Returns:
-        (max_diff, total_diff)
+        (max_diff, total_diff, mean_diff)
         - max_diff: 最大绝对误差 max_i |a_i - b_i|
         - total_diff: 总误差和 sum_i |a_i - b_i|
-        - mean_diff: 平均误差和 sum_i |a_i - b-i| / n
+        - mean_diff: 平均误差和 sum_i |a_i - b_i| / n
     Notes:
         - 使用复数128位精度计算以避免数值误差
         - 向量会自动展平处理，支持任意形状输入
         - 只使用加法、乘法和比较运算，避免除法操作
     """
-    #print("A:",state_a.tolist(), state_a.dtype)
     a = np.asarray(state_a, dtype=np.complex128).flatten()
-    #print("B:",state_b.tolist(), state_b.dtype)
     b = np.asarray(state_b, dtype=np.complex128).flatten()
     diff = np.abs(a - b)
-    #print("diff:",diff.tolist(), diff.dtype)
     return float(np.max(diff)), float(np.sum(diff)), float(np.mean(diff))
 
 
-def compare_three_implementations(n_qubits=4, a=30, b=0, c=0):
+def compare_three_implementations(n_qubits=4, a=30, b=0, c=0, csv_filename=None):
     """
     三系统对比测试：DeepQuantum vs polar原始 vs polar+CDF
+    结果保存到CSV文件
 
     Args:
         n_qubits: 量子比特数量
         a, b, c: random_sequence 参数
+        csv_filename: CSV文件名，如果为None则自动生成
     """
     if not DEEPQUANTUM_AVAILABLE:
         print("❌ DeepQuantum 未安装")
         return
 
-    print("=" * 90)
-    print("三系统量子计算兼容性测试")
-    print("=" * 90)
-    print(f"系统配置: {n_qubits} 量子比特")
-    print(f"序列参数: a={a}, b={b}, c={c}")
-    print()
+    # 生成CSV文件名
+    if csv_filename is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_filename = f"quantum_comparison_{n_qubits}qubits_a{a}_b{b}_c{c}_{timestamp}.csv"
+
+    print(f"开始测试: {n_qubits} 量子比特, 参数 a={a}, b={b}, c={c}")
+    print(f"结果将保存到: {csv_filename}")
 
     # 1. 创建初始向量和序列（所有系统使用相同的）
     initial_vec = create_initial_vec_complex(2**n_qubits, False)
-     
     initial_tensor = torch.from_numpy(initial_vec.astype(np.complex64))
-    #print(initial_tensor.tolist(), initial_tensor.dtype)
-    #print(initial_vec.tolist(), initial_vec.dtype)
-    #print("--------------------------------")
-    #init_cir = dq.QubitCircuit(nqubit=n_qubits, init_state=initial_tensor)
-    #init_cir.h(0)
-    #initial_tensor = init_cir() 
 
     # 使用固定的种子确保序列可重现
     seq = random_sequence(a, b, c, n_qubits=n_qubits, shuffle=False)
 
     print(f"初始向量长度: {len(initial_vec)}")
     print(f"量子门序列长度: {len(seq)}")
-    print()
 
     # 2. 运行 polarALL_state_int16_cdf (CDF系统)
     print("运行 polarALL_state_int16_cdf...")
@@ -159,9 +154,7 @@ def compare_three_implementations(n_qubits=4, a=30, b=0, c=0):
     )
 
     # 4. 比较初始状态
-    # 将所有系统转换为 DeepQuantum 的 MSB first 格式进行比较
     dq_initial = initial_tensor.cpu().numpy()
-    #print("DQ:", dq_initial.tolist(), dq_initial.dtype)
     # CDF 系统的初始状态：从 PolarStateEncoded 解码并转换为 MSB first
     polar_wm_initial_complex = polar_wm_history[0].decode_state().cpu().numpy().flatten()
     polar_wm_initial_converted = inverse_bit_order_conversion(polar_wm_initial_complex, n_qubits)
@@ -171,22 +164,6 @@ def compare_three_implementations(n_qubits=4, a=30, b=0, c=0):
         polar_orig_history[0][0], polar_orig_history[0][1]
     ).cpu().numpy().flatten()
     polar_orig_initial_converted = inverse_bit_order_conversion(polar_orig_initial_complex, n_qubits)
-
-    print("初始状态对比 (max=最大绝对误差, total=总误差和):")
-    print("-" * 70)
-    wm_max_diff, wm_total_diff, wm_mean_diff = compute_state_difference(
-        polar_wm_initial_complex, dq_initial
-    )
-    print(f"CDF系统   vs DeepQ: max={wm_max_diff:.2e}, total={wm_total_diff:.2e}")
-    orig_max_diff, orig_total_diff, orig_mean_diff = compute_state_difference(
-        polar_orig_initial_complex, dq_initial
-    )
-    print(f"原始系统 vs DeepQ: max={orig_max_diff:.2e}, total={orig_total_diff:.2e}")
-    wm_orig_max_diff, wm_orig_total_diff, wm_orig_mean_diff = compute_state_difference(
-        polar_wm_initial_converted, polar_orig_initial_converted
-    )
-    print(f"CDF系统   vs 原始: max={wm_orig_max_diff:.2e}, total={wm_orig_total_diff:.2e}")
-    print()
 
     # 5. 设置DeepQuantum门映射
     gate_map = {
@@ -215,87 +192,165 @@ def compare_three_implementations(n_qubits=4, a=30, b=0, c=0):
             'CU2': lambda c, ctrl, targ, p: c.cu(control=ctrl, target=targ, inputs=[p[0], p[1], 0]),
             'CU3': lambda c, ctrl, targ, p: c.cu(control=ctrl, target=targ, inputs=[p[0], p[1], p[2]]),
     }
-    #print(initial_tensor.tolist())
-    #print(initial_vec.tolist())
+
     # 6. 逐步运行DeepQuantum并与两个polar系统比较
     initial_tensor_converted = bit_order_conversion(initial_tensor, n_qubits)
     circuit = dq.QubitCircuit(nqubit=n_qubits, init_state=torch.from_numpy(initial_tensor_converted.astype(np.complex64)))
-    #print(initial_tensor, )
-    print("各量子门后的状态对比 (total=总误差和):")
-    print("-" * 100)
-    print(f"{'Gate Operation':<25} {'CDF⇔DeepQ':<12} {'Orig⇔DeepQ':<12} {'CDF⇔Orig':<12}")
-    print("-" * 100)
 
-    for step, gate_tuple in enumerate(seq):
-        gate_name, _, params, control_idx, target_idx = gate_tuple
-        if not isinstance(params, list):
-            params = []
+    # 准备CSV文件
+    with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
+        fieldnames = [
+            'step', 'gate_operation', 'comparison_type',
+            'max_diff', 'total_diff', 'mean_diff',
+            'n_qubits', 'a', 'b', 'c', 'timestamp'
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
 
-        # 应用门到 DeepQuantum 电路（统一 5 元组格式）
-        if control_idx is None:
-            qubit_idx = int(target_idx)
-            if gate_name in gate_map:
-                if params:
-                    gate_map[gate_name](circuit, qubit_idx, params)
-                else:
-                    gate_map[gate_name](circuit, qubit_idx)
-        else:
-            control_idx, target_idx = int(control_idx), int(target_idx)
-            if gate_name in gate_map:
-                if params:
-                    gate_map[gate_name](circuit, control_idx, target_idx, params)
-                else:
-                    gate_map[gate_name](circuit, control_idx, target_idx)
+        timestamp = datetime.now().isoformat()
 
-        # 获取DeepQuantum结果（保持 MSB first 格式）
-        dq_state_raw = circuit().cpu().numpy().flatten()
-        dq_state_converted = inverse_bit_order_conversion(dq_state_raw, n_qubits)
-        #print("DQ:", dq_state_raw.tolist())
-        # CDF 系统当前状态：从 PolarStateEncoded 解码并转换为 MSB first
-        polar_wm_state_obj = polar_wm_history[step + 1]
-        polar_wm_complex = polar_wm_state_obj.decode_state().cpu().numpy().flatten()
-        polar_wm_converted = inverse_bit_order_conversion(polar_wm_complex, n_qubits)
-        #print("CDF:", polar_wm_converted.tolist())
-        # 原始 polar 系统当前状态：从 (polar_vec, scale_vec) 解码并转换为 MSB first
-        polar_orig_state, polar_orig_scale = polar_orig_history[step + 1]
-        polar_orig_complex = polar_to_complex_original(
-            polar_orig_state, polar_orig_scale
-        ).cpu().numpy().flatten()
-        polar_orig_converted = inverse_bit_order_conversion(polar_orig_complex, n_qubits)
-        #print("Orig:", polar_orig_converted.tolist())
+        # 写入初始状态比较
         wm_max_diff, wm_total_diff, wm_mean_diff = compute_state_difference(
-            polar_wm_complex, dq_state_converted
+            polar_wm_initial_complex, dq_initial
         )
-        #print("DQ:", dq_state_raw.tolist())
-        #print("CDF:", polar_wm_complex.tolist())
-        #print("Orig:", polar_orig_complex.tolist())
+        writer.writerow({
+            'step': -1,
+            'gate_operation': 'INITIAL',
+            'comparison_type': 'CDF_vs_DeepQ',
+            'max_diff': wm_max_diff,
+            'total_diff': wm_total_diff,
+            'mean_diff': wm_mean_diff,
+            'n_qubits': n_qubits,
+            'a': a, 'b': b, 'c': c,
+            'timestamp': timestamp
+        })
+
         orig_max_diff, orig_total_diff, orig_mean_diff = compute_state_difference(
-            polar_orig_complex, dq_state_converted
+            polar_orig_initial_complex, dq_initial
         )
+        writer.writerow({
+            'step': -1,
+            'gate_operation': 'INITIAL',
+            'comparison_type': 'Orig_vs_DeepQ',
+            'max_diff': orig_max_diff,
+            'total_diff': orig_total_diff,
+            'mean_diff': orig_mean_diff,
+            'n_qubits': n_qubits,
+            'a': a, 'b': b, 'c': c,
+            'timestamp': timestamp
+        })
+
         wm_orig_max_diff, wm_orig_total_diff, wm_orig_mean_diff = compute_state_difference(
-            polar_wm_converted, polar_orig_converted
+            polar_wm_initial_converted, polar_orig_initial_converted
         )
+        writer.writerow({
+            'step': -1,
+            'gate_operation': 'INITIAL',
+            'comparison_type': 'CDF_vs_Orig',
+            'max_diff': wm_orig_max_diff,
+            'total_diff': wm_orig_total_diff,
+            'mean_diff': wm_orig_mean_diff,
+            'n_qubits': n_qubits,
+            'a': a, 'b': b, 'c': c,
+            'timestamp': timestamp
+        })
 
-        if control_idx is None:
-            gate_str = f"{gate_name}(比特={target_idx})"
-        else:
-            gate_str = f"{gate_name}(控制={control_idx}, 目标={target_idx})"
+        # 逐步执行门操作并记录结果
+        for step, gate_tuple in enumerate(seq):
+            if step % 10 == 0:
+                print(f"处理步骤 {step}/{len(seq)}...")
 
-        print(f"{gate_str:<25} "
-              f"{wm_total_diff:.2e} "
-              f"{orig_total_diff:.2e} "
-              f"{wm_orig_total_diff:.2e}")
-        print(f"{"max diff":<25} "
-              f"{wm_max_diff:.2e} "
-              f"{orig_max_diff:.2e} "
-              f"{wm_orig_max_diff:.2e}")
-        print(f"{"mean diff":<25} "
-              f"{wm_mean_diff:.2e} "
-              f"{orig_mean_diff:.2e} "
-              f"{wm_orig_mean_diff:.2e}")
-        print("----------------------------------")
-    print("-" * 100)
-    print("\n测试完成!")
+            gate_name, _, params, control_idx, target_idx = gate_tuple
+            if not isinstance(params, list):
+                params = []
+
+            # 应用门到 DeepQuantum 电路
+            if control_idx is None:
+                qubit_idx = int(target_idx)
+                if gate_name in gate_map:
+                    if params:
+                        gate_map[gate_name](circuit, qubit_idx, params)
+                    else:
+                        gate_map[gate_name](circuit, qubit_idx)
+            else:
+                control_idx, target_idx = int(control_idx), int(target_idx)
+                if gate_name in gate_map:
+                    if params:
+                        gate_map[gate_name](circuit, control_idx, target_idx, params)
+                    else:
+                        gate_map[gate_name](circuit, control_idx, target_idx)
+
+            # 获取DeepQuantum结果
+            dq_state_raw = circuit().cpu().numpy().flatten()
+            dq_state_converted = inverse_bit_order_conversion(dq_state_raw, n_qubits)
+
+            # CDF 系统当前状态
+            polar_wm_state_obj = polar_wm_history[step + 1]
+            polar_wm_complex = polar_wm_state_obj.decode_state().cpu().numpy().flatten()
+            polar_wm_converted = inverse_bit_order_conversion(polar_wm_complex, n_qubits)
+
+            # 原始 polar 系统当前状态
+            polar_orig_state, polar_orig_scale = polar_orig_history[step + 1]
+            polar_orig_complex = polar_to_complex_original(
+                polar_orig_state, polar_orig_scale
+            ).cpu().numpy().flatten()
+            polar_orig_converted = inverse_bit_order_conversion(polar_orig_complex, n_qubits)
+
+            # 计算差异
+            wm_max_diff, wm_total_diff, wm_mean_diff = compute_state_difference(
+                polar_wm_complex, dq_state_converted
+            )
+            orig_max_diff, orig_total_diff, orig_mean_diff = compute_state_difference(
+                polar_orig_complex, dq_state_converted
+            )
+            wm_orig_max_diff, wm_orig_total_diff, wm_orig_mean_diff = compute_state_difference(
+                polar_wm_converted, polar_orig_converted
+            )
+
+            # 构建门操作字符串
+            if control_idx is None:
+                gate_str = f"{gate_name}(qubit={target_idx})"
+            else:
+                gate_str = f"{gate_name}(control={control_idx}, target={target_idx})"
+
+            # 写入CSV
+            writer.writerow({
+                'step': step,
+                'gate_operation': gate_str,
+                'comparison_type': 'CDF_vs_DeepQ',
+                'max_diff': wm_max_diff,
+                'total_diff': wm_total_diff,
+                'mean_diff': wm_mean_diff,
+                'n_qubits': n_qubits,
+                'a': a, 'b': b, 'c': c,
+                'timestamp': timestamp
+            })
+
+            writer.writerow({
+                'step': step,
+                'gate_operation': gate_str,
+                'comparison_type': 'Orig_vs_DeepQ',
+                'max_diff': orig_max_diff,
+                'total_diff': orig_total_diff,
+                'mean_diff': orig_mean_diff,
+                'n_qubits': n_qubits,
+                'a': a, 'b': b, 'c': c,
+                'timestamp': timestamp
+            })
+
+            writer.writerow({
+                'step': step,
+                'gate_operation': gate_str,
+                'comparison_type': 'CDF_vs_Orig',
+                'max_diff': wm_orig_max_diff,
+                'total_diff': wm_orig_total_diff,
+                'mean_diff': wm_orig_mean_diff,
+                'n_qubits': n_qubits,
+                'a': a, 'b': b, 'c': c,
+                'timestamp': timestamp
+            })
+
+    print(f"\n✅ 测试完成! 结果已保存到 {csv_filename}")
     print("✅ DeepQ: DeepQuantum作为标准参考")
     print("✅ 原始系统: polarALL_state_int16 (int16量化)")
     print("✅ CDF系统: polarALL_state_int16_cdf (极坐标CDF量化)")

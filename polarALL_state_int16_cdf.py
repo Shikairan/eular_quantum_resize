@@ -23,7 +23,7 @@ from vector_withCDF import PolarVector, PolarStateEncoded
 
 # 设置设备并创建向量实例
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-vector = PolarVector(device=device, amplitude_dtype=torch.int16, phase_dtype=torch.int16)
+vector = PolarVector(device=device, amplitude_dtype=torch.int8, phase_dtype=torch.int8)
 #print(f"Using device: {device}")
 #print(f"Polar vector info: {vector.get_info()}")
 
@@ -51,8 +51,8 @@ def hadamard_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, params
     c_combined = torch.cat([c0_result, c1_result])
     polar_full, params_new = vector.complex_to_polar_tensor(c_combined)
     n = len(c0_result)
-    polar0, polar1 = polar_full[:n], polar_full[n:]
-    return polar0.squeeze(), polar1.squeeze(), params_new
+    polar0, polar1 = polar_full[:n].clone(), polar_full[n:].clone()
+    return polar0, polar1, params_new
 
 
 def x_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, params) -> Tuple[torch.Tensor, torch.Tensor, dict]:
@@ -103,12 +103,12 @@ def rx_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, params, thet
     dev, dtype = c0.device, c0.dtype
     c, s = math.cos(theta / 2), math.sin(theta / 2)
     rx_mat = torch.tensor([[c, -1j * s], [-1j * s, c]], dtype=dtype, device=dev)
-    result = torch.matmul(rx_mat, torch.stack([c0, c1], dim=1))
+    result = torch.matmul(torch.stack([c0, c1], dim=1), rx_mat.T)
     c0_result, c1_result = result[:, 0], result[:, 1]
     c_combined = torch.cat([c0_result, c1_result])
     polar_full, params_new = vector.complex_to_polar_tensor(c_combined)
     n = len(c0_result)
-    return polar_full[:n].squeeze(), polar_full[n:].squeeze(), params_new
+    return polar_full[:n].clone(), polar_full[n:].clone(), params_new
 
 
 def ry_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, params, theta: float) -> Tuple[torch.Tensor, torch.Tensor, dict]:
@@ -118,12 +118,12 @@ def ry_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, params, thet
     dev, dtype = c0.device, c0.dtype
     c, s = math.cos(theta / 2), math.sin(theta / 2)
     ry_mat = torch.tensor([[c, -s], [s, c]], dtype=dtype, device=dev)
-    result = torch.matmul(ry_mat, torch.stack([c0, c1], dim=1), ry_mat)
+    result = torch.matmul(torch.stack([c0, c1], dim=1), ry_mat.T)
     c0_result, c1_result = result[:, 0], result[:, 1]
     c_combined = torch.cat([c0_result, c1_result])
     polar_full, params_new = vector.complex_to_polar_tensor(c_combined)
     n = len(c0_result)
-    return polar_full[:n].squeeze(), polar_full[n:].squeeze(), params_new
+    return polar_full[:n].clone(), polar_full[n:].clone(), params_new
 
 
 def rz_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, params, phi: float) -> Tuple[torch.Tensor, torch.Tensor, dict]:
@@ -155,12 +155,12 @@ def u2_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, params, phi:
         torch.stack([torch.tensor(inv_sqrt2, dtype=dtype, device=dev), -inv_sqrt2 * exp_lambda]),
         torch.stack([inv_sqrt2 * exp_phi, inv_sqrt2 * exp_phi * exp_lambda])
     ])
-    result = torch.matmul(torch.stack(u2_mat, [c0, c1], dim=1))
+    result = torch.matmul(torch.stack([c0, c1], dim=1), u2_mat.T)
     c0_result, c1_result = result[:, 0], result[:, 1]
     c_combined = torch.cat([c0_result, c1_result])
     polar_full, params_new = vector.complex_to_polar_tensor(c_combined)
     n = len(c0_result)
-    return polar_full[:n].squeeze(), polar_full[n:].squeeze(), params_new
+    return polar_full[:n], polar_full[n:], params_new
 
 
 def u3_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, params, theta: float, phi: float, lambda_param: float) -> Tuple[torch.Tensor, torch.Tensor, dict]:
@@ -175,12 +175,12 @@ def u3_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, params, thet
         torch.stack([torch.tensor(c_val, dtype=dtype, device=dev), -exp_lambda * s_val]),
         torch.stack([exp_phi * s_val, exp_phi * exp_lambda * c_val])
     ])
-    result = torch.matmul(u3_mat, torch.stack([c0, c1], dim=1))
+    result = torch.matmul(torch.stack([c0, c1], dim=1), u3_mat.T)
     c0_result, c1_result = result[:, 0], result[:, 1]
     c_combined = torch.cat([c0_result, c1_result])
     polar_full, params_new = vector.complex_to_polar_tensor(c_combined)
     n = len(c0_result)
-    return polar_full[:n].squeeze(), polar_full[n:].squeeze(), params_new
+    return polar_full[:n].clone(), polar_full[n:].clone(), params_new
 
 
 # ===== 极坐标门字典 =====
@@ -220,7 +220,7 @@ def apply_polar_gate_tensor(polar_vec: torch.Tensor, params,
     qubit_mask = 1 << qubit_idx
     idx0_batch = all_indices[(all_indices & qubit_mask) == 0]
     idx1_batch = idx0_batch | qubit_mask
-    print(gate_func)
+
     if len(idx0_batch) > 0:
         states0 = polar_vec[idx0_batch]
         states1 = polar_vec[idx1_batch]
@@ -229,8 +229,7 @@ def apply_polar_gate_tensor(polar_vec: torch.Tensor, params,
         polar_vec[idx0_batch] = new_states0
         polar_vec[idx1_batch] = new_states1
         params = new_params
-    print(params)
-    print("----------------------")
+
     return polar_vec, params
 
 
@@ -272,9 +271,9 @@ def apply_gate_polar_tensor(state: PolarStateEncoded,
             raise ValueError(f"控制门 {gate_name} 需要指定 target_idx")
 
         if gate_name == 'CNOT':
-            apply_cnot_polar_tensor(polar_vec, control_idx, target_idx)
+            polar_vec, params = apply_cnot_polar_tensor(polar_vec, params, control_idx, target_idx)
         elif gate_name == 'CZ':
-            apply_cz_polar_tensor(polar_vec, control_idx, target_idx)
+            polar_vec, params = apply_cz_polar_tensor(polar_vec, params, control_idx, target_idx)
         elif gate_name == 'CH':
             polar_vec, params = apply_ch_polar_tensor(polar_vec, params, control_idx, target_idx)
         elif gate_name == 'CY':
@@ -318,50 +317,77 @@ def apply_gate_polar_tensor(state: PolarStateEncoded,
 
 def apply_controlled_gate_polar_tensor(polar_vec: torch.Tensor, params,
                                      control_idx: int, target_idx: int, gate_func, *gate_params) -> Tuple[torch.Tensor, dict]:
-    """应用控制门（CDF 版本）"""
+    """
+    应用控制门（CDF 版本）- 完全修复局部重量化导致全局参数不一致问题
+
+    根因：gate_func 仅对控制位=1 的子集做矩阵运算并重新量化，生成的 new_params 只反映
+    该子集分布。若直接采用 new_params，控制位=0 的状态仍用旧编码，导致同一向量内存在
+    两套量化参数，decode 时必有一半完全错误。修复：先将全部状态解码为复数，合并后统一重量化。
+    """
     n = polar_vec.shape[0]
     n_qubit = int(math.log2(n))
+    device_local = polar_vec.device
     assert 2 ** n_qubit == n and control_idx != target_idx
     assert 0 <= control_idx < n_qubit and 0 <= target_idx < n_qubit
 
     control_mask = 1 << control_idx
     target_mask = 1 << target_idx
-    all_indices = torch.arange(n, device=device, dtype=torch.long)
-    control_set_target_clear = (all_indices & control_mask) != 0
-    control_set_target_clear &= (all_indices & target_mask) == 0
-    idx0_batch = all_indices[control_set_target_clear]
-    idx1_batch = idx0_batch | target_mask
-    valid_mask = (idx1_batch < n) & ((idx1_batch & control_mask) != 0)
-    idx0_batch = idx0_batch[valid_mask]
-    idx1_batch = idx1_batch[valid_mask]
+    all_indices = torch.arange(n, device=device_local, dtype=torch.long)
 
-    if len(idx0_batch) == 0:
+    control_is_0 = (all_indices & control_mask) == 0
+    control_is_1 = ~control_is_0
+
+    idx_control_1_target_0 = all_indices[control_is_1 & ((all_indices & target_mask) == 0)]
+    idx_control_1_target_1 = idx_control_1_target_0 | target_mask
+
+    if len(idx_control_1_target_0) == 0:
         return polar_vec, params
 
-    states0 = polar_vec[idx0_batch]
-    states1 = polar_vec[idx1_batch]
+    idx_control_0 = all_indices[control_is_0]
+
+    if len(idx_control_0) > 0:
+        states_control_0 = polar_vec[idx_control_0].clone()
+        complex_control_0 = vector.polar_to_complex_tensor(states_control_0, params=params)
+
+    states0 = polar_vec[idx_control_1_target_0].clone()
+    states1 = polar_vec[idx_control_1_target_1].clone()
     ret = gate_func(states0, states1, params, *gate_params)
     new_states0, new_states1, new_params = ret[:3]
-    polar_vec[idx0_batch] = new_states0
-    polar_vec[idx1_batch] = new_states1
-    return polar_vec, new_params
+
+    complex_control_1_target_0 = vector.polar_to_complex_tensor(new_states0, params=new_params)
+    complex_control_1_target_1 = vector.polar_to_complex_tensor(new_states1, params=new_params)
+
+    complex_full = torch.empty(n, dtype=torch.complex64, device=device_local)
+    if len(idx_control_0) > 0:
+        complex_full[idx_control_0] = complex_control_0
+    complex_full[idx_control_1_target_0] = complex_control_1_target_0
+    complex_full[idx_control_1_target_1] = complex_control_1_target_1
+
+    polar_vec_new, params_new = vector.complex_to_polar_tensor(complex_full)
+    return polar_vec_new, params_new
 
 
-def apply_cnot_polar_tensor(polar_vec: torch.Tensor, control_idx: int, target_idx: int):
-    """应用 CNOT 门：当控制比特为 |1⟩ 时，交换 |...0⟩ 与 |...1⟩"""
+def apply_cnot_polar_tensor(polar_vec: torch.Tensor, params, control_idx: int, target_idx: int) -> Tuple[torch.Tensor, dict]:
+    """应用 CNOT 门：当控制比特为 |1⟩ 时，交换 |...0⟩ 与 |...1⟩（向量化版本）"""
     n = polar_vec.shape[0]
     n_qubit = int(math.log2(n))
     assert 2 ** n_qubit == n and control_idx != target_idx
     control_mask = 1 << control_idx
     target_mask = 1 << target_idx
-    indices_to_swap = []
-    for i in range(n):
-        if (i & control_mask) != 0:
-            j = i ^ target_mask
-            if i < j:
-                indices_to_swap.append((i, j))
-    for i, j in indices_to_swap:
-        polar_vec[i], polar_vec[j] = polar_vec[j].clone(), polar_vec[i].clone()
+
+    all_indices = torch.arange(n, device=device, dtype=torch.long)
+    control_is_1 = (all_indices & control_mask) != 0
+    target_is_0 = (all_indices & target_mask) == 0
+
+    idx0 = all_indices[control_is_1 & target_is_0]  # 控制=1, 目标=0
+    idx1 = idx0 ^ target_mask  # 控制=1, 目标=1
+
+    if len(idx0) > 0:
+        temp = polar_vec[idx0].clone()
+        polar_vec[idx0] = polar_vec[idx1]
+        polar_vec[idx1] = temp
+
+    return polar_vec, params
 
 
 def apply_ch_polar_tensor(polar_vec: torch.Tensor, params, control_idx: int, target_idx: int):
@@ -386,7 +412,7 @@ def apply_cy_polar_tensor(polar_vec: torch.Tensor, params, control_idx: int, tar
 
 def apply_crx_polar_tensor(polar_vec: torch.Tensor, params, control_idx: int, target_idx: int, theta: float):
     """应用 CRx 门（与 polarALL_state_3 一致）"""
-    return apply_controlled_gate_polar_tensor(polar_vec, scale_vec, control_idx, target_idx, rx_polar_tensor, theta)
+    return apply_controlled_gate_polar_tensor(polar_vec, params, control_idx, target_idx, rx_polar_tensor, theta)
 
 
 def apply_cry_polar_tensor(polar_vec: torch.Tensor, params, control_idx: int, target_idx: int, theta: float):
@@ -414,23 +440,27 @@ def apply_cu3_polar_tensor(polar_vec: torch.Tensor, params, control_idx: int, ta
     return apply_controlled_gate_polar_tensor(polar_vec, params, control_idx, target_idx, u3_polar_tensor, theta, phi, lambda_param)
 
 
-def apply_cz_polar_tensor(polar_vec: torch.Tensor, control_idx: int, target_idx: int) -> None:
+def apply_cz_polar_tensor(polar_vec: torch.Tensor, params, control_idx: int, target_idx: int) -> Tuple[torch.Tensor, dict]:
     """
-    应用 CZ 门（与 polarALL_state_3 完全一致）
-    CZ 门：当控制比特与目标比特都为 |1⟩ 时，相位翻转 π
+    应用 CZ 门：当控制比特与目标比特都为 |1⟩ 时，相位翻转 π（向量化版本）
     """
     n = polar_vec.shape[0]
     n_qubit = int(math.log2(n))
-    assert 2 ** n_qubit == n
-    assert control_idx != target_idx
+    assert 2 ** n_qubit == n and control_idx != target_idx
     assert 0 <= control_idx < n_qubit and 0 <= target_idx < n_qubit
 
-    mask1 = 1 << control_idx
-    mask2 = 1 << target_idx
+    control_mask = 1 << control_idx
+    target_mask = 1 << target_idx
 
-    for i in range(n):
-        if (i & mask1) != 0 and (i & mask2) != 0:  # 两个比特都为 1
-            polar_vec[i, 1] = vector.add_phase_encoded(polar_vec[i:i+1, 1], math.pi)[0]
+    all_indices = torch.arange(n, device=device, dtype=torch.long)
+    both_1 = ((all_indices & control_mask) != 0) & ((all_indices & target_mask) != 0)
+    idx_both_1 = all_indices[both_1]
+
+    if len(idx_both_1) > 0:
+        new_phase = vector.add_phase_encoded(polar_vec[idx_both_1, 1], math.pi)
+        polar_vec[idx_both_1, 1] = new_phase.to(polar_vec.dtype)
+
+    return polar_vec, params
 
 
 # ===== 辅助函数 =====
@@ -470,44 +500,21 @@ def process_sequence_polar(initial_vec: List[complex], seq: List[Tuple], verbose
 
     current_state = initial_state
     for step, gate_tuple in enumerate(seq):
-        # 解析序列格式：支持不同的参数数量
-        if len(gate_tuple) == 4:
-            gate_name = gate_tuple[0]
-            gate_params = gate_tuple[2] if len(gate_tuple) > 2 and isinstance(gate_tuple[2], list) else []
-            if gate_name.startswith('C') or gate_name in ['CNOT', 'CZ']:
-                # 控制门 4元组: (name, params, control_idx, target_idx)
-                control_idx, target_idx = gate_tuple[2], gate_tuple[3]
-                is_controlled = True
-            else:
-                # 单比特门: (name, param_str/params, _, qubit_idx)
-                qubit_idx = gate_tuple[3]
-                control_idx = None
-                target_idx = qubit_idx
-                is_controlled = False
-        elif len(gate_tuple) == 5:
-            # 控制门 5元组: (name, param_str, params, control_idx, target_idx)
-            gate_name, _, gate_params, control_idx, target_idx = gate_tuple
-            is_controlled = True
-        else:
-            raise ValueError(f"无效的序列格式: {gate_tuple}")
+        if len(gate_tuple) != 5:
+            raise ValueError(f"序列必须是 5 元组格式: (name, param_str, params, control_idx, target_idx)，当前: {gate_tuple}")
 
-        # 检查是否是控制门（额外确认）
-        is_controlled = is_controlled or (gate_name.startswith('C') or gate_name in ['CNOT', 'CZ'])
+        gate_name, _, gate_params, control_idx, target_idx = gate_tuple
+        if not isinstance(gate_params, list):
+            gate_params = []
+
+        is_controlled = control_idx is not None
 
         if is_controlled:
-            # 控制门：使用序列中指定的控制和目标比特位
             current_state = apply_gate_polar_tensor(current_state, gate_name, gate_params, control_idx, target_idx)
             gate_info = f"{gate_name}(控制={control_idx}, 目标={target_idx})"
         else:
-            # 单比特门：使用序列中指定的比特位
-
-
-            current_state = apply_gate_polar_tensor(current_state, gate_name, gate_params, target_idx=qubit_idx)
-            
-
-
-
-            gate_info = f"{gate_name}(比特={qubit_idx})"
+            current_state = apply_gate_polar_tensor(current_state, gate_name, gate_params, target_idx=target_idx)
+            gate_info = f"{gate_name}(比特={target_idx})"
 
         state_history.append(current_state.clone())
 
@@ -556,7 +563,7 @@ def benchmark_polar_int16(n_qubits: int = 4, n_sequences: int = 100, sequence_le
         norm = math.sqrt(sum(abs(x)**2 for x in initial_vec))
         initial_vec = [x/norm for x in initial_vec]
 
-        # 创建随机序列
+        # 创建随机序列（统一 5 元组格式）
         seq = []
         for _ in range(sequence_length):
             gate_name = random.choice(['H', 'X', 'Y', 'Z', 'S', 'T'])
@@ -564,9 +571,8 @@ def benchmark_polar_int16(n_qubits: int = 4, n_sequences: int = 100, sequence_le
                 gate_params = [random.uniform(0, 2*math.pi)]
             else:
                 gate_params = []
-            control_idx = None
             target_idx = random.randint(0, n_qubits-1)
-            seq.append((gate_name, gate_params, control_idx, target_idx))
+            seq.append((gate_name, '', gate_params, None, target_idx))
 
         # 处理序列
         final_state, _ = process_sequence_polar(initial_vec, seq, verbose=False)
@@ -610,9 +616,9 @@ if __name__ == "__main__":
     print("\nTesting sequence processing...")
     initial_vec = [1.0, 0.0, 0.0, 0.0]  # |00⟩ 状态
     seq = [
-        ('H', [], None, 0),     # 对第一个量子比特应用 H 门
-        ('X', [], None, 1),     # 对第二个量子比特应用 X 门
-        ('CNOT', [], 0, 1),     # CNOT 门，控制=0，目标=1
+        ('H', '', [], None, 0),       # H 门，目标比特 0
+        ('X', '', [], None, 1),       # X 门，目标比特 1
+        ('CNOT', '', [], 0, 1),       # CNOT，控制=0，目标=1
     ]
 
     final_state, state_history = process_sequence_polar(initial_vec, seq, verbose=True)

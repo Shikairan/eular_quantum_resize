@@ -23,7 +23,7 @@ from vector import PolarVector
 
 # 设置设备并创建向量实例
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-vector = PolarVector(device, amplitude_dtype=torch.int16, phase_dtype=torch.int16)
+vector = PolarVector(device, amplitude_dtype=torch.int8, phase_dtype=torch.int8)
 print(f"Using device: {device}")
 print(f"Polar vector info: {vector.get_info()}")
 
@@ -141,7 +141,7 @@ def rx_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch:
     rx_mat = torch.tensor([[c, -1j * s], [-1j * s, c]], dtype=dtype, device=device)
 
     # 应用矩阵到每个状态对
-    result = torch.matmul(rx_mat, torch.stack([c0, c1], dim=1))
+    result = torch.matmul(torch.stack([c0, c1], dim=1), rx_mat.T)
 
     # 分离结果并转换回极坐标格式
     c0_result = result[:, 0]
@@ -168,7 +168,7 @@ def ry_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch:
     ry_mat = torch.tensor([[c, -s], [s, c]], dtype=dtype, device=device)
 
     # 应用矩阵到每个状态对
-    result = torch.matmul(ry_mat, torch.stack([c0, c1], dim=1))
+    result = torch.matmul(torch.stack([c0, c1], dim=1), ry_mat.T)
 
     # 分离结果并转换回极坐标格式
     c0_result = result[:, 0]
@@ -215,7 +215,7 @@ def u2_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch:
         torch.stack([torch.tensor(inv_sqrt2, dtype=dtype, device=device), -inv_sqrt2 * exp_lambda]),
         torch.stack([inv_sqrt2 * exp_phi, inv_sqrt2 * exp_phi * exp_lambda])
     ])
-    result = torch.matmul(u2_mat, torch.stack([c0, c1], dim=1))
+    result = torch.matmul(torch.stack([c0, c1], dim=1), u2_mat.T)
     polar_result0, scale_result0 = vector.complex_to_polar_tensor(result[:, 0])
     polar_result1, scale_result1 = vector.complex_to_polar_tensor(result[:, 1])
     combined_scale = torch.maximum(scale_result0, scale_result1)
@@ -235,7 +235,7 @@ def u3_polar_tensor(z0_batch: torch.Tensor, z1_batch: torch.Tensor, scale_batch:
         torch.stack([torch.tensor(c_val, dtype=dtype, device=device), -exp_lambda * s_val]),
         torch.stack([exp_phi * s_val, exp_phi * exp_lambda * c_val])
     ])
-    result = torch.matmul(u3_mat, torch.stack([c0, c1], dim=1))
+    result = torch.matmul(torch.stack([c0, c1], dim=1), u3_mat.T)
     polar_result0, scale_result0 = vector.complex_to_polar_tensor(result[:, 0])
     polar_result1, scale_result1 = vector.complex_to_polar_tensor(result[:, 1])
     combined_scale = torch.maximum(scale_result0, scale_result1)
@@ -590,40 +590,31 @@ def process_sequence_polar(initial_vec: List[complex], seq: List[Tuple], verbose
         print(f"初始状态（前8个）:")
         print(polar_vec_to_string(vec, scale_vec, range(min(8, n_amps))))
 
-    # 处理每个门
+    # 处理每个门（支持 4 元组向后兼容 + 统一 5 元组格式）
     for step, gate_tuple in enumerate(seq):
-        # 解析序列格式：支持不同的参数数量
-        if len(gate_tuple) == 4:
+        if len(gate_tuple) == 5:
+            gate_name, _, gate_params, control_idx, target_idx = gate_tuple
+            if not isinstance(gate_params, list):
+                gate_params = []
+            is_controlled = control_idx is not None
+        elif len(gate_tuple) == 4:
             gate_name = gate_tuple[0]
             gate_params = gate_tuple[2] if len(gate_tuple) > 2 and isinstance(gate_tuple[2], list) else []
             if gate_name.startswith('C') or gate_name in ['CNOT', 'CZ']:
-                # 控制门 4元组: (name, params, control_idx, target_idx)
                 control_idx, target_idx = gate_tuple[2], gate_tuple[3]
                 is_controlled = True
             else:
-                # 单比特门: (name, param_str/params, _, qubit_idx)
-                qubit_idx = gate_tuple[3]
-                control_idx = None
-                target_idx = qubit_idx
+                control_idx, target_idx = None, gate_tuple[3]
                 is_controlled = False
-        elif len(gate_tuple) == 5:
-            # 控制门 5元组: (name, param_str, params, control_idx, target_idx)
-            gate_name, _, gate_params, control_idx, target_idx = gate_tuple
-            is_controlled = True
         else:
-            raise ValueError(f"无效的序列格式: {gate_tuple}")
-
-        # 检查是否是控制门（额外确认）
-        is_controlled = is_controlled or (gate_name.startswith('C') or gate_name in ['CNOT', 'CZ'])
+            raise ValueError(f"无效的序列格式，需 4 或 5 元组: {gate_tuple}")
 
         if is_controlled:
-            # 控制门：使用序列中指定的控制和目标比特位
             vec, scale_vec = apply_gate_polar_tensor(vec, scale_vec, gate_name, gate_params, control_idx, target_idx)
             gate_info = f"{gate_name}(控制={control_idx}, 目标={target_idx})"
         else:
-            # 单比特门：使用序列中指定的比特位
-            vec, scale_vec = apply_gate_polar_tensor(vec, scale_vec, gate_name, gate_params, target_idx=qubit_idx)
-            gate_info = f"{gate_name}(比特={qubit_idx})"
+            vec, scale_vec = apply_gate_polar_tensor(vec, scale_vec, gate_name, gate_params, target_idx=target_idx)
+            gate_info = f"{gate_name}(比特={target_idx})"
 
         # 记录这一步的状态
         state_history.append((vec.clone(), scale_vec.clone()))
@@ -710,7 +701,7 @@ def benchmark_polar_int16(n_qubits: int = 4, n_sequences: int = 100, sequence_le
 # ===== 主函数 =====
 
 if __name__ == "__main__":
-    print("Int16 + Int8 Mixed Precision Polar Quantum Simulator")
+    print("Int8 + Int8 Mixed Precision Polar Quantum Simulator")
     print("=" * 60)
 
     # 基本功能测试

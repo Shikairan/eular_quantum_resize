@@ -20,7 +20,9 @@ def random_sequence(n: int, m: int, amp_n: int, n_qubits: int = 5, shuffle: bool
         shuffle: 是否随机打乱顺序
 
     Returns:
-        量子门序列，格式为 [(gate_name, param_str, params, qubit_info...), ...]
+        量子门序列，统一 5 元组格式：[(gate_name, param_str, params, control_idx, target_idx), ...]
+        单比特门：control_idx=None, target_idx=qubit_idx；
+        控制门：control_idx, target_idx 为控制和目标比特索引。
     """
     seq = []
 
@@ -39,11 +41,11 @@ def random_sequence(n: int, m: int, amp_n: int, n_qubits: int = 5, shuffle: bool
     # 多参数控制门
     multi_param_controlled_gates = ['CU2', 'CU3']
 
-    # 生成无参数单比特门
+    # 生成无参数单比特门（统一 5 元组：control_idx=None）
     for _ in range(n):
         g = random.choice(no_param_gates)
         qubit_idx = random.randint(0, n_qubits - 1)
-        seq.append((g, '', [], qubit_idx))
+        seq.append((g, '', [], None, qubit_idx))
 
     # 生成无参数控制门
     for _ in range(n):
@@ -51,22 +53,22 @@ def random_sequence(n: int, m: int, amp_n: int, n_qubits: int = 5, shuffle: bool
         qubits = random.sample(range(n_qubits), 2)
         control_idx, target_idx = qubits[0], qubits[1]
         seq.append((g, '', [], control_idx, target_idx))
-    # 生成有参数单比特门（单参数和多参数）
+    # 生成有参数单比特门（单参数和多参数，统一 5 元组）
     for _ in range(m):
         g = random.choice(single_param_gates + multi_param_gates)
         qubit_idx = random.randint(0, n_qubits - 1)
         if g in single_param_gates:
             param = random.uniform(0, 2 * math.pi)
-            seq.append((g, f'({param:.3f})', [param], qubit_idx))
+            seq.append((g, f'({param:.3f})', [param], None, qubit_idx))
         elif g == 'U2':
             phi = random.uniform(0, 2 * math.pi)
             lambda_param = random.uniform(0, 2 * math.pi)
-            seq.append((g, f'({phi:.3f},{lambda_param:.3f})', [phi, lambda_param], qubit_idx))
+            seq.append((g, f'({phi:.3f},{lambda_param:.3f})', [phi, lambda_param], None, qubit_idx))
         elif g == 'U3':
             theta = random.uniform(0, 2 * math.pi)
             phi = random.uniform(0, 2 * math.pi)
             lambda_param = random.uniform(0, 2 * math.pi)
-            seq.append((g, f'({theta:.3f},{phi:.3f},{lambda_param:.3f})', [theta, phi, lambda_param], qubit_idx))
+            seq.append((g, f'({theta:.3f},{phi:.3f},{lambda_param:.3f})', [theta, phi, lambda_param], None, qubit_idx))
 
     # 生成有参数控制门
     for _ in range(m):
@@ -86,15 +88,15 @@ def random_sequence(n: int, m: int, amp_n: int, n_qubits: int = 5, shuffle: bool
             lambda_param = random.uniform(0, 2 * math.pi)
             seq.append((g, f'({theta:.3f},{phi:.3f},{lambda_param:.3f})', [theta, phi, lambda_param], control_idx, target_idx))
 
-    # 生成幅度相关的门（H 门和旋转门）
+    # 生成幅度相关的门（H 门和旋转门，统一 5 元组）
     for _ in range(amp_n):
         g = random.choice(['H', 'Rx', 'Ry', 'Rz'])
         qubit_idx = random.randint(0, n_qubits - 1)
         if g in ['Rx', 'Ry', 'Rz']:
             param = random.uniform(0, 2 * math.pi)
-            seq.append((g, f'({param:.3f})', [param], qubit_idx))
+            seq.append((g, f'({param:.3f})', [param], None, qubit_idx))
         else:
-            seq.append((g, '', [], qubit_idx))
+            seq.append((g, '', [], None, qubit_idx))
 
     if shuffle:
         random.shuffle(seq)
@@ -122,18 +124,18 @@ def random_sequence_single_qubit_only(n: int, m: int, amp_n: int, n_qubits: int 
     # 单参数门
     single_param_gates = ['Rx', 'Ry', 'Rz']
 
-    # 生成无参数单比特门
+    # 生成无参数单比特门（统一 5 元组）
     for _ in range(n):
         g = random.choice(no_param_gates)
         qubit_idx = random.randint(0, n_qubits - 1)
-        seq.append((g, '', [], qubit_idx))
+        seq.append((g, '', [], None, qubit_idx))
 
     # 生成有参数单比特门
     for _ in range(m):
         g = random.choice(single_param_gates)
         qubit_idx = random.randint(0, n_qubits - 1)
         param = random.uniform(0, 2 * math.pi)
-        seq.append((g, f'({param:.3f})', [param], qubit_idx))
+        seq.append((g, f'({param:.3f})', [param], None, qubit_idx))
 
     # 生成幅度相关的门
     for _ in range(amp_n):
@@ -141,9 +143,9 @@ def random_sequence_single_qubit_only(n: int, m: int, amp_n: int, n_qubits: int 
         qubit_idx = random.randint(0, n_qubits - 1)
         if g in ['Rx', 'Ry', 'Rz']:
             param = random.uniform(0, 2 * math.pi)
-            seq.append((g, f'({param:.3f})', [param], qubit_idx))
+            seq.append((g, f'({param:.3f})', [param], None, qubit_idx))
         else:
-            seq.append((g, '', [], qubit_idx))
+            seq.append((g, '', [], None, qubit_idx))
 
     if shuffle:
         random.shuffle(seq)
@@ -169,7 +171,7 @@ def create_initial_vec_complex(n_amps: int, avg=False) -> List[complex]:
         complex_vector = [complex(1,0) for _ in range(n_amps)]
     # 归一化
     norm = np.linalg.norm(complex_vector)
-    normalized_vector = complex_vector / norm
+    normalized_vector = np.array(complex_vector / norm, dtype=np.complex64)
 
     return normalized_vector
 
